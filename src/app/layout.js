@@ -1,10 +1,14 @@
 /* src/app/layout.js */
 import "./globals.css";
-import CookieBanner from "@/components/CookieBanner/CookieBanner"; // Импортируем компонент
+import CookieBanner from "@/components/CookieBanner/CookieBanner";
 
 export const metadata = {
-  title: "PromptVault",
+  title: "PromptVault (Local-First)",
   description: "Secure, local-first prompt management",
+  // ДОБАВЛЯЕМ БЛОК verification СЮДА:
+  verification: {
+    google: "rEm88MlgB-J142CJqVlNSrwEu5fnP6D8lRY86PJQEew",
+  },
 };
 
 export default function RootLayout({ children }) {
@@ -12,7 +16,7 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body>
         {children}
-        <CookieBanner /> {/* Вставляем баннер сюда */}
+        <CookieBanner />
       </body>
     </html>
   );
