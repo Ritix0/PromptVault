@@ -1,66 +1,408 @@
-import Image from "next/image";
+/* src/app/page.js */
+"use client";
+
+import { useState, useEffect } from "react";
 import styles from "./page.module.css";
+import { storageService } from "@/services/storage";
+import { googleService } from "@/services/google"; 
+import { userService } from "@/services/user"; // НОВОЕ: Импортируем для проверки статуса
+import PromptEditor from "@/components/PromptEditor/PromptEditor";
+import Settings from "@/components/Settings/Settings";
 
 export default function Home() {
+  const [view, setView] = useState("list"); 
+  const [folder, setFolder] = useState("all"); 
+  const [prompts, setPrompts] = useState([]);
+  const [currentPrompt, setCurrentPrompt] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState([]); 
+  const [isLoading, setIsLoading] = useState(true); 
+  
+  // Состояние для визуализации процесса синхронизации
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Загрузка данных
+  useEffect(() => {
+    loadPrompts();
+  }, []);
+
+  const loadPrompts = async () => {
+    setIsLoading(true);
+    try {
+        const data = await storageService.getAllPrompts();
+        const sorted = data.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        setPrompts(sorted);
+    } catch (error) {
+        console.error("Failed to load prompts", error);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  // --- ЛОГИКА ФИЛЬТРАЦИИ ---
+  const allTags = [...new Set(prompts
+    .filter(p => !p.isDeleted)
+    .flatMap(p => p.tags || []))
+  ].sort();
+
+  const filteredPrompts = prompts.filter(p => {
+    if (folder === "trash") {
+        if (!p.isDeleted) return false;
+    } else {
+        if (p.isDeleted) return false; 
+        if (folder === "favorites" && !p.isFavorite) return false;
+    }
+
+    const matchesSearch = 
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        p.content.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!matchesSearch) return false;
+
+    if (selectedTags.length > 0) {
+        const hasTags = selectedTags.every(tag => (p.tags || []).includes(tag));
+        if (!hasTags) return false;
+    }
+
+    return true;
+  });
+
+  // --- ACTIONS ---
+
+  const handleSavePrompt = async (promptData) => {
+    const savedPrompt = await storageService.savePrompt(promptData);
+    await loadPrompts();
+    setView("list");
+
+    // Фоновая синхронизация при сохранении (упрощенная)
+    if (localStorage.getItem("pv_google_token")) {
+        console.log("🔄 Background Syncing...");
+        googleService.appendToSheet(savedPrompt).catch(err => console.warn("Sheet sync failed:", err));
+        
+        // Отправляем полный JSON с метаданными
+        storageService.getRawData().then(json => {
+            googleService.uploadBackup(json).catch(err => console.warn("Backup sync failed:", err));
+        });
+    }
+  };
+
+  const handleDeletePrompt = async (id) => {
+    await storageService.deletePrompt(id); 
+    await loadPrompts();
+    setView("list");
+  };
+
+  const handleRestore = async (e, id) => {
+    e.stopPropagation();
+    await storageService.restorePrompt(id);
+    await loadPrompts();
+  };
+
+  const handlePermanentDelete = async (e, id) => {
+    e.stopPropagation();
+    if(confirm("Delete forever? This cannot be undone.")) {
+        await storageService.permanentDelete(id);
+        await loadPrompts();
+    }
+  };
+
+  const handleToggleFavorite = async (e, id) => {
+    e.stopPropagation();
+    await storageService.toggleFavorite(id);
+    await loadPrompts(); 
+  };
+
+  const toggleTagFilter = (tag) => {
+    setSelectedTags(prev => 
+        prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const handleDataChanged = () => {
+    loadPrompts();
+  };
+
+  // --- ИСПРАВЛЕННАЯ ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
+  const handleQuickSync = async () => {
+      // 0. Проверка авторизации
+      if (!localStorage.getItem("pv_google_token")) {
+          alert("⚠️ Not connected to Google.\nPlease go to Settings and sign in first.");
+          setView("settings");
+          return;
+      }
+
+      setIsSyncing(true); // Включаем индикатор загрузки
+      
+      try {
+          // --- ЭТАП А: PULL (Скачивание) ---
+          console.log("⬇️ Pulling from Cloud...");
+          const cloudData = await googleService.downloadBackup();
+          
+          let mergedCount = 0;
+          if (cloudData) {
+              // Объединяем данные (включая восстановление лицензии и Device ID)
+              mergedCount = await storageService.mergeData(cloudData);
+          }
+
+          // --- ЭТАП Б: RELOAD & SAFETY CHECK ---
+          // Получаем актуальное состояние локальной базы после слияния
+          const allPrompts = await storageService.getAllPrompts();
+          
+          // Проверяем: если в облаке были данные, а у нас 0 - значит что-то пошло не так.
+          const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
+          
+          if (allPrompts.length === 0 && cloudHasPrompts) {
+              alert("⚠️ SAFETY STOP: Cloud has data, but local database is empty after merge.\nUpload aborted to prevent data loss.");
+              setIsSyncing(false); 
+              return; 
+          }
+
+          // --- ЭТАП В: PUSH (Отправка) ---
+          console.log("⬆️ Pushing to Cloud...");
+          
+          // 1. Получаем JSON с метаданными (включая лицензию и Device ID)
+          const rawData = await storageService.getRawData();
+          
+          // 2. Отправляем и JSON, и массив для таблицы
+          await googleService.syncEverything(rawData, allPrompts);
+          
+          // 3. Очищаем лог удаленных
+          storageService.clearDeletedLog();
+
+          // --- ЭТАП Г: AUTO-VERIFY & FINALIZE ---
+          // Если синхронизация подтянула ключ, проверяем его статус тихо
+          const key = await storageService.getSetting("license_key");
+          if (key) {
+               // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
+               // Не блокируем UI, просто обновляем статус в фоне
+               userService.verifyKeyOnServer(key).then(isValid => {
+                   if(isValid) console.log("License verified after sync");
+               });
+          }
+
+          await loadPrompts(); // Обновляем UI
+          alert(`✅ Sync Complete!\nPulled: ${mergedCount} new items.\nCloud and Local are in sync.`);
+
+      } catch (e) {
+          console.error("Quick sync failed:", e);
+          alert(`❌ Sync Error: ${e.message || "Unknown error"}.\nCheck console for details.`);
+      } finally {
+          setIsSyncing(false); // Выключаем индикатор в любом случае
+      }
+  };
+
   return (
-    <div className={styles.page}>
+    <div className={styles.container}>
+      <header className={styles.header}>
+        <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
+            PromptVault
+        </div>
+        <nav className={styles.nav}>
+          <button 
+            className={styles.navLink} 
+            onClick={() => setView("list")}
+            style={{ fontWeight: view === 'list' ? 'bold' : 'normal' }}
+          >
+            Dashboard
+          </button>
+          <button 
+            className={styles.navLink} 
+            onClick={() => setView("settings")}
+            style={{ fontWeight: view === 'settings' ? 'bold' : 'normal' }}
+          >
+            Settings
+          </button>
+        </nav>
+      </header>
+
       <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.js file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
+        <aside className={styles.sidebar}>
+          <div className={styles.sidebarTitle}>Explorer</div>
+          <ul className={styles.menuList}>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("all"); setView("list"); }}
+              style={{ fontWeight: folder === 'all' && view === 'list' ? 'bold' : 'normal', background: folder === 'all' && view === 'list' ? 'var(--border)' : 'transparent' }}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
+              📂 All Prompts
+            </li>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("favorites"); setView("list"); }}
+              style={{ fontWeight: folder === 'favorites' ? 'bold' : 'normal', background: folder === 'favorites' ? 'var(--border)' : 'transparent' }}
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+              ⭐ Favorites
+            </li>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("trash"); setView("list"); }}
+              style={{ fontWeight: folder === 'trash' ? 'bold' : 'normal', background: folder === 'trash' ? 'var(--border)' : 'transparent', color: folder === 'trash' ? '#ef4444' : 'inherit' }}
+            >
+              🗑️ Trash
+            </li>
+          </ul>
+
+          <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Tags</div>
+          <div className={styles.tagCloud}>
+            {allTags.length === 0 && <span style={{opacity:0.5, fontSize:'0.8rem'}}>
+                {isLoading ? "Loading tags..." : "No tags yet"}
+            </span>}
+            {!isLoading && allTags.map(tag => (
+                <span 
+                    key={tag} 
+                    className={`${styles.tag} ${selectedTags.includes(tag) ? styles.tagActive : ''}`}
+                    onClick={() => toggleTagFilter(tag)}
+                >
+                    #{tag}
+                </span>
+            ))}
+          </div>
+          
+          <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Quick Actions</div>
+          <ul className={styles.menuList}>
+            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); }}>
+              ➕ New Prompt
+            </li>
+            {/* КНОПКА СИНХРОНИЗАЦИИ */}
+            <li 
+                className={styles.menuItem} 
+                onClick={!isSyncing ? handleQuickSync : null}
+                style={{ 
+                    cursor: isSyncing ? 'wait' : 'pointer',
+                    opacity: isSyncing ? 0.7 : 1,
+                    color: 'var(--primary)',
+                    fontWeight: 500
+                }}
+            >
+              {isSyncing ? "⏳ Syncing..." : "☁️ Force Cloud Sync"}
+            </li>
+          </ul>
+        </aside>
+
+        <section className={styles.workspace}>
+          {/* VIEW: LIST (DASHBOARD) */}
+          {view === "list" && (
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                  <h2 className={styles.cardTitle}>
+                    {folder === 'all' && "All Prompts"}
+                    {folder === 'favorites' && "⭐ Favorites"}
+                    {folder === 'trash' && "🗑️ Trash Can"}
+                  </h2>
+                  {folder !== 'trash' && (
+                      <button 
+                          className={styles.createBtn}
+                          onClick={() => { setCurrentPrompt(null); setView("create"); }}
+                      >
+                          + Create
+                      </button>
+                  )}
+              </div>
+
+              {/* SEARCH */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                  <input 
+                    type="text"
+                    placeholder="🔍 Search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{width: '100%', padding: '0.8rem', borderRadius: '6px', border: '1px solid var(--border)', backgroundColor: 'var(--background)', color: 'var(--foreground)', outline: 'none'}}
+                  />
+              </div>
+              
+              {/* LIST */}
+              {isLoading ? (
+                  <div style={{padding: '2rem', textAlign: 'center', opacity: 0.6}}>
+                      Loading database...
+                  </div>
+              ) : filteredPrompts.length === 0 ? (
+                <p className={styles.placeholderText}>
+                  {folder === 'trash' ? "Trash is empty." : "No prompts found."}
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none' }}>
+                  {filteredPrompts.map((p) => (
+                    <li 
+                      key={p.id} 
+                      className={styles.promptItem}
+                      onClick={() => { 
+                          if(folder !== 'trash') {
+                              setCurrentPrompt(p); setView("edit"); 
+                          }
+                      }}
+                      style={{ cursor: folder === 'trash' ? 'default' : 'pointer' }}
+                    >
+                      <div style={{display:'flex', justifyContent:'space-between', width:'100%'}}>
+                          <div style={{flex:1}}>
+                              <div style={{display:'flex', alignItems:'center', gap:'0.5rem'}}>
+                                  {folder !== 'trash' && (
+                                      <button 
+                                        className={`${styles.starBtn} ${p.isFavorite ? styles.starActive : ''}`}
+                                        onClick={(e) => handleToggleFavorite(e, p.id)}
+                                      >
+                                        {p.isFavorite ? "★" : "☆"}
+                                      </button>
+                                  )}
+                                  <strong>{p.title}</strong>
+                              </div>
+                              
+                              <div className={styles.promptMeta}>
+                                  <span style={{marginRight:'10px'}}>{new Date(p.updatedAt).toLocaleDateString()}</span>
+                                  {/* Tags in list */}
+                                  {(p.tags || []).map(t => (
+                                      <span key={t} className={styles.tag} style={{fontSize:'0.7rem', padding:'1px 5px'}}>#{t}</span>
+                                  ))}
+                              </div>
+                          </div>
+
+                          {/* TRASH ACTIONS */}
+                          {folder === 'trash' && (
+                              <div className={styles.trashActions}>
+                                  <button className={styles.btnRestore} onClick={(e) => handleRestore(e, p.id)}>Restore</button>
+                                  <button className={styles.btnDanger} onClick={(e) => handlePermanentDelete(e, p.id)}>Delete</button>
+                              </div>
+                          )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* VIEW: CREATE / EDIT */}
+          {(view === "create" || view === "edit") && (
+            <div className={styles.card}>
+              <PromptEditor 
+                initialData={currentPrompt}
+                onSave={handleSavePrompt}
+                onDelete={handleDeletePrompt}
+                onCancel={() => setView("list")}
+                onUpdate={loadPrompts}
+              />
+            </div>
+          )}
+
+          {/* VIEW: SETTINGS */}
+          {view === "settings" && (
+            <div className={styles.card}>
+                <Settings onDataChanged={handleDataChanged} />
+            </div>
+          )}
+        </section>
       </main>
+
+      <footer className={styles.footer}>
+        <div style={{marginBottom: '0.5rem'}}>
+            PromptVault © 2026. Local-First Architecture. Data stored on your device.
+        </div>
+        <div style={{fontSize: '0.8rem', opacity: 0.8}}>
+            <a href="/privacy" style={{marginRight: '10px', textDecoration: 'underline'}}>Privacy Policy</a>
+            |
+            <a href="/terms" style={{marginLeft: '10px', marginRight: '10px', textDecoration: 'underline'}}>Terms of Service</a>
+            |
+            <span style={{marginLeft: '10px'}}>Support: milligat13@gmail.com</span>
+        </div>
+      </footer>
     </div>
   );
 }

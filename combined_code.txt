@@ -1,0 +1,4483 @@
+--- Файл: src\app\globals.css ---
+
+/* src/app/globals.css */
+:root {
+  --background: #f8f9fa;
+  --foreground: #1a1a1a;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --border: #e5e7eb;
+  --card-bg: #ffffff;
+  --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --max-width: 1200px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0f172a;
+    --foreground: #e2e8f0;
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
+    --border: #334155;
+    --card-bg: #1e293b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: var(--font-main);
+  background-color: var(--background);
+  color: var(--foreground);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Исправленный блок сброса кнопок */
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  background-color: transparent; /* Убирает белый фон */
+  color: inherit; /* Наследует цвет текста */
+  padding: 0;
+  margin: 0;
+}
+
+--- Файл: src\app\layout.js ---
+
+/* src/app/layout.js */
+import "./globals.css";
+import CookieBanner from "@/components/CookieBanner/CookieBanner"; // Импортируем компонент
+
+export const metadata = {
+  title: "PromptVault (Local-First)",
+  description: "Secure, local-first prompt management",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+        <CookieBanner /> {/* Вставляем баннер сюда */}
+      </body>
+    </html>
+  );
+}
+
+--- Файл: src\app\page.js ---
+
+/* src/app/page.js */
+"use client";
+
+import { useState, useEffect } from "react";
+import styles from "./page.module.css";
+import { storageService } from "@/services/storage";
+import { googleService } from "@/services/google"; 
+import { userService } from "@/services/user"; // НОВОЕ: Импортируем для проверки статуса
+import PromptEditor from "@/components/PromptEditor/PromptEditor";
+import Settings from "@/components/Settings/Settings";
+
+export default function Home() {
+  const [view, setView] = useState("list"); 
+  const [folder, setFolder] = useState("all"); 
+  const [prompts, setPrompts] = useState([]);
+  const [currentPrompt, setCurrentPrompt] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState([]); 
+  const [isLoading, setIsLoading] = useState(true); 
+  
+  // Состояние для визуализации процесса синхронизации
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Загрузка данных
+  useEffect(() => {
+    loadPrompts();
+  }, []);
+
+  const loadPrompts = async () => {
+    setIsLoading(true);
+    try {
+        const data = await storageService.getAllPrompts();
+        const sorted = data.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        setPrompts(sorted);
+    } catch (error) {
+        console.error("Failed to load prompts", error);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  // --- ЛОГИКА ФИЛЬТРАЦИИ ---
+  const allTags = [...new Set(prompts
+    .filter(p => !p.isDeleted)
+    .flatMap(p => p.tags || []))
+  ].sort();
+
+  const filteredPrompts = prompts.filter(p => {
+    if (folder === "trash") {
+        if (!p.isDeleted) return false;
+    } else {
+        if (p.isDeleted) return false; 
+        if (folder === "favorites" && !p.isFavorite) return false;
+    }
+
+    const matchesSearch = 
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        p.content.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!matchesSearch) return false;
+
+    if (selectedTags.length > 0) {
+        const hasTags = selectedTags.every(tag => (p.tags || []).includes(tag));
+        if (!hasTags) return false;
+    }
+
+    return true;
+  });
+
+  // --- ACTIONS ---
+
+  const handleSavePrompt = async (promptData) => {
+    const savedPrompt = await storageService.savePrompt(promptData);
+    await loadPrompts();
+    setView("list");
+
+    // Фоновая синхронизация при сохранении (упрощенная)
+    if (localStorage.getItem("pv_google_token")) {
+        console.log("🔄 Background Syncing...");
+        googleService.appendToSheet(savedPrompt).catch(err => console.warn("Sheet sync failed:", err));
+        
+        // Отправляем полный JSON с метаданными
+        storageService.getRawData().then(json => {
+            googleService.uploadBackup(json).catch(err => console.warn("Backup sync failed:", err));
+        });
+    }
+  };
+
+  const handleDeletePrompt = async (id) => {
+    await storageService.deletePrompt(id); 
+    await loadPrompts();
+    setView("list");
+  };
+
+  const handleRestore = async (e, id) => {
+    e.stopPropagation();
+    await storageService.restorePrompt(id);
+    await loadPrompts();
+  };
+
+  const handlePermanentDelete = async (e, id) => {
+    e.stopPropagation();
+    if(confirm("Delete forever? This cannot be undone.")) {
+        await storageService.permanentDelete(id);
+        await loadPrompts();
+    }
+  };
+
+  const handleToggleFavorite = async (e, id) => {
+    e.stopPropagation();
+    await storageService.toggleFavorite(id);
+    await loadPrompts(); 
+  };
+
+  const toggleTagFilter = (tag) => {
+    setSelectedTags(prev => 
+        prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const handleDataChanged = () => {
+    loadPrompts();
+  };
+
+  // --- ИСПРАВЛЕННАЯ ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
+  const handleQuickSync = async () => {
+      // 0. Проверка авторизации
+      if (!localStorage.getItem("pv_google_token")) {
+          alert("⚠️ Not connected to Google.\nPlease go to Settings and sign in first.");
+          setView("settings");
+          return;
+      }
+
+      setIsSyncing(true); // Включаем индикатор загрузки
+      
+      try {
+          // --- ЭТАП А: PULL (Скачивание) ---
+          console.log("⬇️ Pulling from Cloud...");
+          const cloudData = await googleService.downloadBackup();
+          
+          let mergedCount = 0;
+          if (cloudData) {
+              // Объединяем данные (включая восстановление лицензии и Device ID)
+              mergedCount = await storageService.mergeData(cloudData);
+          }
+
+          // --- ЭТАП Б: RELOAD & SAFETY CHECK ---
+          // Получаем актуальное состояние локальной базы после слияния
+          const allPrompts = await storageService.getAllPrompts();
+          
+          // Проверяем: если в облаке были данные, а у нас 0 - значит что-то пошло не так.
+          const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
+          
+          if (allPrompts.length === 0 && cloudHasPrompts) {
+              alert("⚠️ SAFETY STOP: Cloud has data, but local database is empty after merge.\nUpload aborted to prevent data loss.");
+              setIsSyncing(false); 
+              return; 
+          }
+
+          // --- ЭТАП В: PUSH (Отправка) ---
+          console.log("⬆️ Pushing to Cloud...");
+          
+          // 1. Получаем JSON с метаданными (включая лицензию и Device ID)
+          const rawData = await storageService.getRawData();
+          
+          // 2. Отправляем и JSON, и массив для таблицы
+          await googleService.syncEverything(rawData, allPrompts);
+          
+          // 3. Очищаем лог удаленных
+          storageService.clearDeletedLog();
+
+          // --- ЭТАП Г: AUTO-VERIFY & FINALIZE ---
+          // Если синхронизация подтянула ключ, проверяем его статус тихо
+          const key = await storageService.getSetting("license_key");
+          if (key) {
+               // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
+               // Не блокируем UI, просто обновляем статус в фоне
+               userService.verifyKeyOnServer(key).then(isValid => {
+                   if(isValid) console.log("License verified after sync");
+               });
+          }
+
+          await loadPrompts(); // Обновляем UI
+          alert(`✅ Sync Complete!\nPulled: ${mergedCount} new items.\nCloud and Local are in sync.`);
+
+      } catch (e) {
+          console.error("Quick sync failed:", e);
+          alert(`❌ Sync Error: ${e.message || "Unknown error"}.\nCheck console for details.`);
+      } finally {
+          setIsSyncing(false); // Выключаем индикатор в любом случае
+      }
+  };
+
+  return (
+    <div className={styles.container}>
+      <header className={styles.header}>
+        <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
+            PromptVault
+        </div>
+        <nav className={styles.nav}>
+          <button 
+            className={styles.navLink} 
+            onClick={() => setView("list")}
+            style={{ fontWeight: view === 'list' ? 'bold' : 'normal' }}
+          >
+            Dashboard
+          </button>
+          <button 
+            className={styles.navLink} 
+            onClick={() => setView("settings")}
+            style={{ fontWeight: view === 'settings' ? 'bold' : 'normal' }}
+          >
+            Settings
+          </button>
+        </nav>
+      </header>
+
+      <main className={styles.main}>
+        <aside className={styles.sidebar}>
+          <div className={styles.sidebarTitle}>Explorer</div>
+          <ul className={styles.menuList}>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("all"); setView("list"); }}
+              style={{ fontWeight: folder === 'all' && view === 'list' ? 'bold' : 'normal', background: folder === 'all' && view === 'list' ? 'var(--border)' : 'transparent' }}
+            >
+              📂 All Prompts
+            </li>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("favorites"); setView("list"); }}
+              style={{ fontWeight: folder === 'favorites' ? 'bold' : 'normal', background: folder === 'favorites' ? 'var(--border)' : 'transparent' }}
+            >
+              ⭐ Favorites
+            </li>
+            <li 
+              className={styles.menuItem} 
+              onClick={() => { setFolder("trash"); setView("list"); }}
+              style={{ fontWeight: folder === 'trash' ? 'bold' : 'normal', background: folder === 'trash' ? 'var(--border)' : 'transparent', color: folder === 'trash' ? '#ef4444' : 'inherit' }}
+            >
+              🗑️ Trash
+            </li>
+          </ul>
+
+          <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Tags</div>
+          <div className={styles.tagCloud}>
+            {allTags.length === 0 && <span style={{opacity:0.5, fontSize:'0.8rem'}}>
+                {isLoading ? "Loading tags..." : "No tags yet"}
+            </span>}
+            {!isLoading && allTags.map(tag => (
+                <span 
+                    key={tag} 
+                    className={`${styles.tag} ${selectedTags.includes(tag) ? styles.tagActive : ''}`}
+                    onClick={() => toggleTagFilter(tag)}
+                >
+                    #{tag}
+                </span>
+            ))}
+          </div>
+          
+          <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Quick Actions</div>
+          <ul className={styles.menuList}>
+            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); }}>
+              ➕ New Prompt
+            </li>
+            {/* КНОПКА СИНХРОНИЗАЦИИ */}
+            <li 
+                className={styles.menuItem} 
+                onClick={!isSyncing ? handleQuickSync : null}
+                style={{ 
+                    cursor: isSyncing ? 'wait' : 'pointer',
+                    opacity: isSyncing ? 0.7 : 1,
+                    color: 'var(--primary)',
+                    fontWeight: 500
+                }}
+            >
+              {isSyncing ? "⏳ Syncing..." : "☁️ Force Cloud Sync"}
+            </li>
+          </ul>
+        </aside>
+
+        <section className={styles.workspace}>
+          {/* VIEW: LIST (DASHBOARD) */}
+          {view === "list" && (
+            <div className={styles.card}>
+              <div className={styles.cardHeader}>
+                  <h2 className={styles.cardTitle}>
+                    {folder === 'all' && "All Prompts"}
+                    {folder === 'favorites' && "⭐ Favorites"}
+                    {folder === 'trash' && "🗑️ Trash Can"}
+                  </h2>
+                  {folder !== 'trash' && (
+                      <button 
+                          className={styles.createBtn}
+                          onClick={() => { setCurrentPrompt(null); setView("create"); }}
+                      >
+                          + Create
+                      </button>
+                  )}
+              </div>
+
+              {/* SEARCH */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                  <input 
+                    type="text"
+                    placeholder="🔍 Search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{width: '100%', padding: '0.8rem', borderRadius: '6px', border: '1px solid var(--border)', backgroundColor: 'var(--background)', color: 'var(--foreground)', outline: 'none'}}
+                  />
+              </div>
+              
+              {/* LIST */}
+              {isLoading ? (
+                  <div style={{padding: '2rem', textAlign: 'center', opacity: 0.6}}>
+                      Loading database...
+                  </div>
+              ) : filteredPrompts.length === 0 ? (
+                <p className={styles.placeholderText}>
+                  {folder === 'trash' ? "Trash is empty." : "No prompts found."}
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none' }}>
+                  {filteredPrompts.map((p) => (
+                    <li 
+                      key={p.id} 
+                      className={styles.promptItem}
+                      onClick={() => { 
+                          if(folder !== 'trash') {
+                              setCurrentPrompt(p); setView("edit"); 
+                          }
+                      }}
+                      style={{ cursor: folder === 'trash' ? 'default' : 'pointer' }}
+                    >
+                      <div style={{display:'flex', justifyContent:'space-between', width:'100%'}}>
+                          <div style={{flex:1}}>
+                              <div style={{display:'flex', alignItems:'center', gap:'0.5rem'}}>
+                                  {folder !== 'trash' && (
+                                      <button 
+                                        className={`${styles.starBtn} ${p.isFavorite ? styles.starActive : ''}`}
+                                        onClick={(e) => handleToggleFavorite(e, p.id)}
+                                      >
+                                        {p.isFavorite ? "★" : "☆"}
+                                      </button>
+                                  )}
+                                  <strong>{p.title}</strong>
+                              </div>
+                              
+                              <div className={styles.promptMeta}>
+                                  <span style={{marginRight:'10px'}}>{new Date(p.updatedAt).toLocaleDateString()}</span>
+                                  {/* Tags in list */}
+                                  {(p.tags || []).map(t => (
+                                      <span key={t} className={styles.tag} style={{fontSize:'0.7rem', padding:'1px 5px'}}>#{t}</span>
+                                  ))}
+                              </div>
+                          </div>
+
+                          {/* TRASH ACTIONS */}
+                          {folder === 'trash' && (
+                              <div className={styles.trashActions}>
+                                  <button className={styles.btnRestore} onClick={(e) => handleRestore(e, p.id)}>Restore</button>
+                                  <button className={styles.btnDanger} onClick={(e) => handlePermanentDelete(e, p.id)}>Delete</button>
+                              </div>
+                          )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* VIEW: CREATE / EDIT */}
+          {(view === "create" || view === "edit") && (
+            <div className={styles.card}>
+              <PromptEditor 
+                initialData={currentPrompt}
+                onSave={handleSavePrompt}
+                onDelete={handleDeletePrompt}
+                onCancel={() => setView("list")}
+                onUpdate={loadPrompts}
+              />
+            </div>
+          )}
+
+          {/* VIEW: SETTINGS */}
+          {view === "settings" && (
+            <div className={styles.card}>
+                <Settings onDataChanged={handleDataChanged} />
+            </div>
+          )}
+        </section>
+      </main>
+
+      <footer className={styles.footer}>
+        <div style={{marginBottom: '0.5rem'}}>
+            PromptVault © 2026. Local-First Architecture. Data stored on your device.
+        </div>
+        <div style={{fontSize: '0.8rem', opacity: 0.8}}>
+            <a href="/privacy" style={{marginRight: '10px', textDecoration: 'underline'}}>Privacy Policy</a>
+            |
+            <a href="/terms" style={{marginLeft: '10px', marginRight: '10px', textDecoration: 'underline'}}>Terms of Service</a>
+            |
+            <span style={{marginLeft: '10px'}}>Support: milligat13@gmail.com</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+--- Файл: src\app\page.module.css ---
+
+/* src/app/page.module.css */
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 1rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2rem;
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: -0.5px;
+}
+
+.nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.navLink {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--foreground);
+  opacity: 0.8;
+  transition: opacity 0.2s;
+  background: transparent; /* Страховка */
+}
+
+.navLink:hover {
+  opacity: 1;
+}
+
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  gap: 2rem;
+  padding-bottom: 2rem;
+}
+
+/* Sidebar styles */
+.sidebar {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  height: fit-content;
+}
+
+.sidebarTitle {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: var(--foreground);
+  opacity: 0.5;
+  margin-bottom: 1rem;
+  font-weight: 700;
+}
+
+.menuList {
+  list-style: none;
+}
+
+.menuItem {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.menuItem:hover {
+  background-color: var(--background);
+}
+
+/* Workspace styles */
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.card {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.cardTitle {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Новый класс для кнопки Create вместо inline-стилей */
+.createBtn {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 0.95rem;
+  background: transparent;
+  transition: opacity 0.2s;
+}
+
+.createBtn:hover {
+  opacity: 0.8;
+}
+
+.placeholderText {
+  color: var(--foreground);
+  opacity: 0.6;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 1.5rem 0;
+  text-align: center;
+  font-size: 0.875rem;
+  opacity: 0.5;
+}
+
+/* Prompt List Item */
+.promptItem {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.promptItem:hover {
+  background-color: var(--background);
+}
+
+.promptMeta {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- TAGS & ICONS --- */
+
+.tagCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tag {
+  background-color: var(--border);
+  color: var(--foreground);
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.tag:hover {
+  background-color: rgba(37, 99, 235, 0.1);
+  color: var(--primary);
+}
+
+.tagActive {
+  background-color: var(--primary);
+  color: white;
+}
+
+.tagActive:hover {
+  background-color: var(--primary-hover);
+  color: white;
+}
+
+.starBtn {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  color: var(--border); /* Gray star by default */
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 5px 0 0;
+  transition: color 0.2s;
+}
+
+.starBtn:hover {
+  color: #fbbf24; /* Gold hover */
+}
+
+.starActive {
+  color: #fbbf24; /* Gold active */
+}
+
+/* --- TRASH ACTIONS --- */
+.trashActions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btnRestore {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  border-radius: 4px;
+}
+
+.btnRestore:hover {
+  background-color: var(--primary);
+  color: white;
+}
+
+.btnDanger {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.btnDanger:hover {
+  background-color: #ef4444;
+  color: white;
+}
+
+--- Файл: src\app\privacy\page.js ---
+
+/* src/app/privacy/page.js */
+export default function PrivacyPolicy() {
+  return (
+    // ИЗМЕНЕНИЕ: color: 'var(--foreground)' вместо '#333'
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', lineHeight: '1.6', color: 'var(--foreground)' }}>
+      <h1 style={{fontSize: '2rem', marginBottom: '1rem'}}>Privacy Policy</h1>
+      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 2026</p>
+
+      <h2>1. Introduction</h2>
+      <p>PromptVault ("we", "our") is a Local-First application. This means <strong>we do not operate a backend database to store your prompts or API keys</strong>. Your data remains strictly in your control.</p>
+
+      <h2>2. Data Storage</h2>
+      <ul>
+        <li><strong>Local Storage:</strong> Your prompts, settings, and API keys are stored in your browser's IndexedDB and LocalStorage.</li>
+        <li><strong>Google Drive (Optional):</strong> If you enable Cloud Sync, your data is backed up directly to your personal Google Drive and Google Sheets. We do not have access to these files; only your browser does.</li>
+      </ul>
+
+      <h2>3. API Keys</h2>
+      <p>PromptVault uses a "Bring Your Own Key" (BYOK) architecture. Your API keys (OpenAI, Anthropic, etc.) are encrypted and stored locally on your device. They are sent directly from your browser to the respective AI provider's API. They are never sent to our servers.</p>
+
+      <h2>4. Google User Data</h2>
+      <p>If you choose to sign in with Google, we use OAuth verification solely to allow the application to write backups to <em>your</em> Google Drive. We do not collect, sell, or view your Google user data.</p>
+
+      <h2>5. Contact</h2>
+      <p>If you have questions about this policy or discover a bug, please contact us at: <strong>milligat13@gmail.com</strong></p>
+      
+      <div style={{marginTop: '2rem'}}>
+        <a href="/" style={{color: 'var(--primary)', textDecoration: 'underline'}}>← Back to App</a>
+      </div>
+    </div>
+  );
+}
+
+--- Файл: src\app\terms\page.js ---
+
+/* src/app/terms/page.js */
+export default function TermsOfService() {
+  return (
+    // ИЗМЕНЕНИЕ: color: 'var(--foreground)' вместо '#333'
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', lineHeight: '1.6', color: 'var(--foreground)' }}>
+      <h1 style={{fontSize: '2rem', marginBottom: '1rem'}}>Terms of Service</h1>
+      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 2026</p>
+
+      <h2>1. Acceptance of Terms</h2>
+      <p>By accessing and using PromptVault, you accept and agree to be bound by the terms and provision of this agreement.</p>
+
+      <h2>2. "As Is" Software</h2>
+      <p>PromptVault is provided "as is". We connect to third-party APIs (OpenAI, Anthropic, etc.), but we cannot guarantee their availability. If a third-party provider changes their API or blocks requests, PromptVault may lose functionality temporarily.</p>
+
+      <h2>3. PRO License & Refunds</h2>
+      <p>The PRO license unlocks advanced interface features. <strong>Please test the Free Trial version before purchasing</strong> to ensure the API connection works from your location/network.</p>
+      <p>Due to the nature of digital license keys, refunds are generally not provided unless the key itself is proven invalid.</p>
+
+      <h2>4. User Responsibility</h2>
+      <p>You are responsible for maintaining the confidentiality of your own data (via Google Drive backups) and your API keys.</p>
+
+      <h2>5. Contact & Support</h2>
+      <p>For support, bug reports, or license issues, contact: <strong>milligat13@gmail.com</strong></p>
+
+      <div style={{marginTop: '2rem'}}>
+        <a href="/" style={{color: 'var(--primary)', textDecoration: 'underline'}}>← Back to App</a>
+      </div>
+    </div>
+  );
+}
+
+--- Файл: src\components\CookieBanner\CookieBanner.js ---
+
+/* src/components/CookieBanner/CookieBanner.js */
+"use client";
+
+import { useState, useEffect } from "react";
+
+export default function CookieBanner() {
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    const consent = localStorage.getItem("pv_cookie_consent");
+    if (!consent) {
+      setShow(true);
+    }
+  }, []);
+
+  const handleAccept = () => {
+    localStorage.setItem("pv_cookie_consent", "true");
+    setShow(false);
+  };
+
+  if (!show) return null;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: '#1e293b',
+      color: '#e2e8f0',
+      padding: '1rem',
+      borderTop: '1px solid #334155',
+      display: 'flex',
+      flexDirection: 'column', // На мобильных в колонку
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '1rem',
+      zIndex: 9999,
+      boxShadow: '0 -4px 10px rgba(0,0,0,0.1)'
+    }}>
+      <div style={{ maxWidth: '800px', fontSize: '0.9rem', textAlign: 'center' }}>
+        <strong>🍪 Local Data & Privacy:</strong> We use local storage and cookies to save your settings and prompts directly in your browser. 
+        We do not store your data on our servers. By using this site, you agree to our 
+        <a href="/terms" style={{color: '#60a5fa', marginLeft: '5px'}}>Terms</a> and 
+        <a href="/privacy" style={{color: '#60a5fa', marginLeft: '5px'}}>Privacy Policy</a>.
+      </div>
+      <button 
+        onClick={handleAccept}
+        style={{
+          backgroundColor: '#2563eb',
+          color: 'white',
+          border: 'none',
+          padding: '0.5rem 1.5rem',
+          borderRadius: '6px',
+          cursor: 'pointer',
+          fontWeight: 'bold'
+        }}
+      >
+        I Understand
+      </button>
+    </div>
+  );
+}
+
+--- Файл: src\components\PromptEditor\PromptEditor.js ---
+
+/* src/components/PromptEditor/PromptEditor.js */
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { diffWords } from "diff"; 
+import styles from "./PromptEditor.module.css";
+import { storageService } from "@/services/storage";
+import { llmService } from "@/services/llm";
+import { userService } from "@/services/user"; 
+
+export default function PromptEditor({ initialData, onSave, onCancel, onDelete, onUpdate }) {
+  const [activeTab, setActiveTab] = useState("edit");
+  
+  // 1. Изменение: Стейт для прав и триалов
+  const [isPro, setIsPro] = useState(false); 
+  const [trialInfo, setTrialInfo] = useState({ allowed: true, trialsLeft: 10 });
+  
+  // Basic Data
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [version, setVersion] = useState(1);
+  const [history, setHistory] = useState([]);
+  
+  // Organization Data (Tags & Favorite)
+  const [tags, setTags] = useState(""); 
+  const [isFavorite, setIsFavorite] = useState(false);
+
+  const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
+
+  // Compare Tab State
+  const [compareLeftId, setCompareLeftId] = useState("current");
+  const [compareRightId, setCompareRightId] = useState("");
+
+  // --- EXECUTION MODES ---
+  // Initial mode depends on loading, will be updated in useEffect
+  const [executionMode, setExecutionMode] = useState("manual");
+
+  // Run/Arena State 
+  const [runMode, setRunMode] = useState("single");
+  const [providers, setProviders] = useState([]);
+  
+  // Test Data State 
+  const [testInput, setTestInput] = useState(""); 
+  
+  // AI Response State 
+  const [aiResponse, setAiResponse] = useState("");
+  const [manualResult, setManualResult] = useState(""); 
+
+  // API Models State
+  const [providerA, setProviderA] = useState("");
+  const [modelA, setModelA] = useState("");
+  const [loadingA, setLoadingA] = useState(false);
+  const [errorA, setErrorA] = useState(null);
+
+  const [providerB, setProviderB] = useState("");
+  const [modelB, setModelB] = useState("");
+  const [responseB, setResponseB] = useState(""); 
+  const [loadingB, setLoadingB] = useState(false);
+  const [errorB, setErrorB] = useState(null);
+
+  // Key State
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  useEffect(() => {
+    if (initialData) {
+      setTitle(initialData.title || "");
+      setContent(initialData.content || "");
+      setVersion(initialData.version || 1);
+      
+      // ВОССТАНОВЛЕНИЕ КОНТЕКСТА
+      setTestInput(initialData.testInput || "");
+      setAiResponse(initialData.lastResult || ""); 
+      setManualResult(initialData.lastResult || "");
+      
+      // ОРГАНИЗАЦИЯ
+      setTags((initialData.tags || []).join(", "));
+      setIsFavorite(initialData.isFavorite || false);
+
+      const hist = initialData.history || [];
+      const sortedHist = [...hist].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setHistory(sortedHist);
+
+      if (sortedHist.length > 0) {
+        setCompareLeftId(sortedHist[0].version.toString());
+        setCompareRightId("current");
+      }
+    } else {
+      setTitle(""); setContent(""); setVersion(1); setHistory([]);
+      setTestInput(""); setAiResponse(""); setManualResult("");
+      setTags(""); setIsFavorite(false);
+    }
+    
+    // Reset UI States
+    setIsDeleteConfirming(false);
+    setErrorA(null); setErrorB(null);
+    setResponseB("");
+
+    // Providers Check
+    const availProviders = llmService.getProviders();
+    setProviders(availProviders);
+
+    if (availProviders.length > 0) {
+      setProviderA(availProviders[0].id);
+      setModelA(availProviders[0].defaultModel);
+      setProviderB(availProviders[0].id);
+      setModelB(availProviders[0].defaultModel);
+    }
+
+    // 2. Изменение: Загрузка статуса пользователя и ключей
+    const checkUserStatus = async () => {
+        // 1. Check PRO status
+        const proStatus = await userService.isPro();
+        setIsPro(proStatus);
+        
+        // 2. Check Trial limit
+        const access = await userService.canRunAI();
+        setTrialInfo(access);
+
+        // 3. Check API Keys & Auto Switch
+        try {
+            const keys = await storageService.getAllApiKeys();
+            const hasAnyKey = Object.values(keys).some(k => k && k.length > 5);
+            setHasApiKey(hasAnyKey);
+
+            // Если есть ключ и это PRO или еще есть попытки -> включаем Auto по умолчанию
+            if (hasAnyKey && (proStatus || access.allowed)) {
+                setExecutionMode("auto");
+            } else {
+                setExecutionMode("manual");
+            }
+        } catch (e) {
+            console.error("Failed to check keys", e);
+        }
+    };
+    checkUserStatus();
+
+  }, [initialData]); // Убран isPro из зависимостей, так как он теперь управляется внутри
+
+  // --- COMPARE LOGIC ---
+  const allVersions = useMemo(() => {
+    const list = [];
+    list.push({
+        id: "current",
+        label: `Current Draft (v${version})`,
+        content: content,
+        testInput: testInput
+    });
+    history.forEach(h => {
+        list.push({
+            id: h.version.toString(),
+            label: `v${h.version} - ${new Date(h.timestamp).toLocaleString()}`,
+            content: h.content,
+            testInput: h.testInput || ""
+        });
+    });
+    return list;
+  }, [content, testInput, version, history]);
+
+  const renderDiff = (text1, text2) => {
+    if (!text1) text1 = "";
+    if (!text2) text2 = "";
+    const diff = diffWords(text1, text2);
+    return diff.map((part, index) => {
+        const spanClass = part.added ? styles.diffAdded : part.removed ? styles.diffRemoved : '';
+        return <span key={index} className={spanClass}>{part.value}</span>;
+    });
+  };
+
+  // --- Actions ---
+  const handleSave = () => {
+    if (!title.trim() && !content.trim()) return;
+    
+    const resultToSave = manualResult || aiResponse;
+    const tagsArray = tags.split(",").map(t => t.trim()).filter(t => t.length > 0);
+
+    onSave({
+      id: initialData?.id || crypto.randomUUID(),
+      title: title.trim() || "Untitled Prompt",
+      content: content,
+      testInput: testInput,   
+      lastResult: resultToSave,
+      tags: tagsArray,        
+      isFavorite: isFavorite  
+    });
+  };
+
+  const handleDeleteClick = () => {
+    if (isDeleteConfirming) { if (onDelete && initialData?.id) onDelete(initialData.id); } 
+    else { setIsDeleteConfirming(true); setTimeout(() => setIsDeleteConfirming(false), 3000); }
+  };
+
+  const handleRestore = (h) => {
+    if(confirm(`Restore v${h.version}? Current unsaved changes will be lost.`)) { 
+        setTitle(h.title); 
+        setContent(h.content); 
+        if (h.testInput) setTestInput(h.testInput);
+        setActiveTab("edit"); 
+    }
+  };
+
+  // --- CLIPBOARD HELPERS ---
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const openExternal = (url) => {
+    window.open(url, "_blank");
+  };
+
+  // --- AUTOMATED RUN ---
+  const executeRun = async (provId, modId, setResp, setLoad, setErr) => {
+    const apiKey = await storageService.getApiKey(provId);
+    
+    if (!apiKey) {
+        setErr(`No API Key for ${provId}. Switch to Manual Mode or add key in Settings.`);
+        return;
+    }
+    setLoad(true); setErr(null); setResp("");
+    try {
+      const res = await llmService.run(provId, apiKey, modId, content, testInput);
+      setResp(res);
+      if (setResp === setAiResponse) {
+          setManualResult(res); 
+      }
+
+      // 3. Изменение: Увеличение счетчика при успехе
+      await storageService.incrementUsageCount();
+      // Обновляем инфо о триале в UI
+      const newInfo = await userService.canRunAI();
+      setTrialInfo(newInfo);
+
+    } catch (e) { setErr(e.message || "Error"); } 
+    finally { setLoad(false); }
+  };
+
+  const handleRunClick = async () => {
+    if (!content.trim()) { alert("System prompt is empty!"); return; }
+    
+    // 4. Изменение: Проверка прав (Check Access)
+    const access = await userService.canRunAI();
+    if (!access.allowed) {
+        alert(access.reason);
+        return;
+    }
+    
+    executeRun(providerA, modelA, setAiResponse, setLoadingA, setErrorA);
+    if (runMode === "arena") {
+      executeRun(providerB, modelB, setResponseB, setLoadingB, setErrorB);
+    }
+  };
+
+  return (
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style={{display:'flex', alignItems:'center', gap:'0.5rem', flex: 1}}>
+                <button 
+                    onClick={async (e) => {
+                        e.stopPropagation();
+                        const newStatus = !isFavorite;
+                        setIsFavorite(newStatus); 
+                        if (initialData?.id) {
+                            await storageService.toggleFavorite(initialData.id);
+                            if (onUpdate) onUpdate(); 
+                        }
+                    }}
+                    style={{
+                        fontSize: '1.5rem', 
+                        cursor: 'pointer', 
+                        color: isFavorite ? '#fbbf24' : 'var(--border)',
+                        background: 'transparent',
+                        border: 'none',
+                        padding: '0 0.5rem',
+                        lineHeight: 1
+                    }}
+                    title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                >
+                    {isFavorite ? "★" : "☆"}
+                </button>
+                <input className={styles.titleInput} placeholder="Prompt Title..." value={title} onChange={(e) => setTitle(e.target.value)}/>
+            </div>
+            <span style={{opacity:0.4, fontSize:'0.8rem', marginLeft:'1rem'}}>v{version}</span>
+        </div>
+        <div className={styles.tabs}>
+            <div className={`${styles.tab} ${activeTab==='edit'?styles.activeTab:''}`} onClick={()=>setActiveTab('edit')}>✏️ Edit</div>
+            <div className={`${styles.tab} ${activeTab==='run'?styles.activeTab:''}`} onClick={()=>setActiveTab('run')}>▶️ Run</div>
+            <div className={`${styles.tab} ${activeTab==='compare'?styles.activeTab:''}`} onClick={()=>setActiveTab('compare')}>⚖️ Compare</div>
+            <div className={`${styles.tab} ${activeTab==='history'?styles.activeTab:''}`} onClick={()=>setActiveTab('history')}>🕒 History ({history.length})</div>
+        </div>
+      </div>
+
+      {/* --- EDIT TAB --- */}
+      {activeTab === 'edit' && (
+        <>
+          <div className={styles.roleLabelRow}>
+            <span className={`${styles.roleBadge} ${styles.roleSystem}`}>SYSTEM</span>
+            <span className={styles.roleDesc}>Instructions & Logic</span>
+          </div>
+          <textarea className={styles.contentArea} value={content} onChange={(e) => setContent(e.target.value)} />
+          
+          <div style={{marginTop: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center'}}>
+             <span style={{fontSize:'0.9rem', fontWeight:600, opacity:0.6}}>Tags:</span>
+             <input 
+                type="text" 
+                placeholder="e.g. seo, coding, email (comma separated)" 
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                style={{
+                    flex: 1, 
+                    padding: '0.5rem', 
+                    borderRadius: '4px', 
+                    border: '1px solid var(--border)',
+                    backgroundColor: 'var(--card-bg)',
+                    color: 'var(--foreground)'
+                }}
+             />
+          </div>
+
+          <div className={styles.footer}>
+            <div className={styles.actionsLeft}>
+              {initialData?.id && <button className={isDeleteConfirming?styles.btnDeleteConfirm:styles.btnDelete} onClick={handleDeleteClick}>{isDeleteConfirming ? "Confirm?" : "Delete"}</button>}
+            </div>
+            <div className={styles.actionsRight}>
+              <button className={styles.btnSecondary} onClick={onCancel}>Cancel</button>
+              <button className={styles.btnPrimary} onClick={handleSave}>Save</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* --- RUN TAB --- */}
+      {activeTab === 'run' && (
+        <div className={styles.runContainer}>
+            
+            {/* 1. ПЕРЕКЛЮЧАТЕЛЬ (Теперь доступен всем, но Auto требует ключ) */}
+            <div className={styles.executionSwitchContainer}>
+                <div className={styles.executionSwitch}>
+                    <div 
+                        className={`${styles.execBtn} ${executionMode === 'manual' ? styles.execBtnActive : ''}`}
+                        onClick={() => setExecutionMode('manual')}
+                    >
+                        🖐 Manual
+                    </div>
+                    {/* 5. Изменение: Разблокировка кнопки Auto */}
+                    <div 
+                        className={`${styles.execBtn} ${executionMode === 'auto' ? styles.execBtnActive : ''}`}
+                        onClick={() => {
+                            if(hasApiKey) setExecutionMode('auto');
+                            else alert("Please add an API key in Settings first.");
+                        }}
+                    >
+                        🤖 Auto (API)
+                    </div>
+                </div>
+            </div>
+
+            <div style={{flex: 1, overflowY: 'auto'}}>
+                {/* 2. ВЫБОР ИНТЕРФЕЙСА */}
+                
+                {/* ВАРИАНТ А: MANUAL MODE (Librarian) */}
+                {executionMode === 'manual' && (
+                    <div className={styles.manualContainer}>
+                        <div style={{textAlign:'center', marginBottom:'1rem'}}>
+                            <h3 style={{color: 'var(--primary)'}}>The Librarian Mode</h3>
+                            <p style={{fontSize:'0.9rem', opacity: 0.7}}>Copy-paste workflow (No API costs)</p>
+                        </div>
+
+                        <div className={styles.manualStep}>
+                            <div className={styles.stepLabel}>Step 1: Copy Data</div>
+                            <div className={styles.copyRow}>
+                                <button className={styles.btnCopy} onClick={() => copyToClipboard(content)}>
+                                    📋 Copy System Prompt
+                                </button>
+                                {testInput && (
+                                    <button className={styles.btnCopy} onClick={() => copyToClipboard(testInput)}>
+                                        📋 Copy User Input
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className={styles.manualStep}>
+                            <div className={styles.stepLabel}>Step 2: Paste into AI</div>
+                            <div className={styles.externalLinks}>
+                                <span className={styles.linkBtn} onClick={() => openExternal("https://chat.openai.com")}>ChatGPT ↗</span>
+                                <span className={styles.linkBtn} onClick={() => openExternal("https://claude.ai")}>Claude ↗</span>
+                                <span className={styles.linkBtn} onClick={() => openExternal("https://gemini.google.com")}>Gemini ↗</span>
+                            </div>
+                        </div>
+
+                        <div className={styles.manualStep}>
+                            <div className={styles.stepLabel}>Step 3: Save Result</div>
+                            <textarea 
+                                className={styles.manualResultArea} 
+                                placeholder="Paste the AI response here to save it locally..."
+                                value={manualResult}
+                                onChange={(e) => setManualResult(e.target.value)}
+                            />
+                        </div>
+                        
+                        <div className={styles.roleLabelRow} style={{marginTop: '1rem'}}>
+                            <span className={`${styles.roleBadge} ${styles.roleUser}`}>USER INPUT</span>
+                             <span className={styles.roleDesc}>Test Data (Variables / Context)</span>
+                        </div>
+                        <textarea 
+                            className={styles.testInputArea} 
+                            placeholder="Type your test data here to copy it later..."
+                            value={testInput} 
+                            onChange={(e) => setTestInput(e.target.value)} 
+                        />
+                    </div>
+                )}
+
+                {/* ВАРИАНТ Б: AUTO MODE (API) */}
+                {executionMode === 'auto' && (
+                    <>
+                        <div className={styles.runControls}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                                <div className={styles.modeToggle}>
+                                    <div className={`${styles.modeBtn} ${runMode==='single'?styles.modeBtnActive:''}`} onClick={()=>setRunMode('single')}>Single</div>
+                                    <div className={`${styles.modeBtn} ${runMode==='arena'?styles.modeBtnActive:''}`} onClick={()=>setRunMode('arena')}>⚔️ Arena</div>
+                                </div>
+                                
+                                {/* 6. Изменение: Кнопка запуска со счетчиком и проверкой */}
+                                <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                                    {!isPro && trialInfo.allowed && (
+                                        <span style={{fontSize:'0.8rem', color:'var(--primary)'}}>
+                                            Trial: {trialInfo.trialsLeft} left
+                                        </span>
+                                    )}
+                                    {!isPro && !trialInfo.allowed && (
+                                        <span style={{fontSize:'0.8rem', color:'#ef4444', fontWeight:'bold'}}>
+                                            Limit Reached
+                                        </span>
+                                    )}
+                                    <button 
+                                        className={styles.btnPrimary} 
+                                        onClick={handleRunClick} 
+                                        disabled={loadingA || loadingB || (!isPro && !trialInfo.allowed)}
+                                        style={{opacity: (!isPro && !trialInfo.allowed) ? 0.5 : 1}}
+                                    >
+                                        {(loadingA || loadingB) ? "Running..." : (runMode === 'arena' ? "⚔️ FIGHT!" : "🚀 Run")}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className={styles.roleLabelRow} style={{marginTop: '0.5rem'}}>
+                                <span className={`${styles.roleBadge} ${styles.roleUser}`}>USER INPUT</span>
+                                <span className={styles.roleDesc}>Test Data (Variables / Context)</span>
+                            </div>
+                            <textarea className={styles.testInputArea} placeholder="Test content..." value={testInput} onChange={(e) => setTestInput(e.target.value)} />
+                        </div>
+
+                        {/* RESULTS AREA */}
+                        {runMode === 'single' ? (
+                            <div className={styles.runControls} style={{marginTop: '1rem', display: 'flex', flexDirection: 'column'}}>
+                                <div className={styles.runTopBar}>
+                                    <select className={styles.btnSecondary} value={providerA} onChange={e=>{setProviderA(e.target.value); setModelA(llmService.getModels(e.target.value)[0])}}>
+                                        {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                    </select>
+                                    <select className={styles.btnSecondary} value={modelA} onChange={e=>setModelA(e.target.value)}>
+                                        {llmService.getModels(providerA).map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div className={styles.runResult}>
+                                    {errorA && <div className={styles.error}>{errorA}</div>}
+                                    {!errorA && !aiResponse && !loadingA && <span style={{opacity:0.5}}>Ready to run...</span>}
+                                    {aiResponse && <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiResponse}</ReactMarkdown>}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className={styles.arenaGrid} style={{marginTop: '1rem'}}>
+                                <div className={styles.arenaCol}>
+                                    <div className={styles.colLabel}>Contender 1</div>
+                                    <div className={styles.arenaColHeader}>
+                                        <select className={styles.btnSecondary} style={{width:'100%'}} value={providerA} onChange={e=>{setProviderA(e.target.value); setModelA(llmService.getModels(e.target.value)[0])}}>
+                                            {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className={styles.arenaResult}>
+                                        {loadingA && <div>Loading...</div>}
+                                        {errorA && <div className={styles.error}>{errorA}</div>}
+                                        {aiResponse && <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiResponse}</ReactMarkdown>}
+                                    </div>
+                                </div>
+                                <div className={styles.arenaCol}>
+                                    <div className={styles.colLabel}>Contender 2</div>
+                                    <div className={styles.arenaColHeader}>
+                                        <select className={styles.btnSecondary} style={{width:'100%'}} value={providerB} onChange={e=>{setProviderB(e.target.value); setModelB(llmService.getModels(e.target.value)[0])}}>
+                                            {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className={styles.arenaResult}>
+                                        {loadingB && <div>Loading...</div>}
+                                        {errorB && <div className={styles.error}>{errorB}</div>}
+                                        {responseB && <ReactMarkdown remarkPlugins={[remarkGfm]}>{responseB}</ReactMarkdown>}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+
+            {/* --- КНОПКИ СОХРАНЕНИЯ В RUN --- */}
+            <div className={styles.footer} style={{marginTop: '1rem', borderTop: '1px solid var(--border)'}}>
+                <div className={styles.actionsLeft}></div>
+                <div className={styles.actionsRight}>
+                    <button className={styles.btnSecondary} onClick={onCancel}>Cancel</button>
+                    <button className={styles.btnPrimary} onClick={handleSave}>Save Result</button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* --- COMPARE TAB --- */}
+      {activeTab === 'compare' && (
+        <div className={styles.compareContainer}>
+            <div className={styles.compareControls}>
+                <div className={styles.compareSelector}>
+                    <label className={styles.diffLabel}>Base Version (Left)</label>
+                    <select className={styles.compareSelect} value={compareLeftId} onChange={e=>setCompareLeftId(e.target.value)}>
+                        {allVersions.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+                    </select>
+                </div>
+                <div className={styles.compareSelector}>
+                    <label className={styles.diffLabel}>Comparison (Right)</label>
+                    <select className={styles.compareSelect} value={compareRightId} onChange={e=>setCompareRightId(e.target.value)}>
+                        {allVersions.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+                    </select>
+                </div>
+            </div>
+
+            <div className={styles.diffGrid}>
+                {(() => {
+                    const left = allVersions.find(v => v.id === compareLeftId) || allVersions[0] || {};
+                    const right = allVersions.find(v => v.id === compareRightId) || allVersions[0] || {};
+                    
+                    return (
+                        <div className={styles.diffCol}>
+                            <div className={styles.diffLabel}>System Prompt Diff</div>
+                            <div className={styles.diffBox}>{renderDiff(left.content, right.content)}</div>
+                            
+                            <div className={styles.diffLabel} style={{marginTop:'1rem'}}>User Input Diff</div>
+                            <div className={styles.diffBox}>{renderDiff(left.testInput, right.testInput)}</div>
+                        </div>
+                    );
+                })()}
+            </div>
+        </div>
+      )}
+
+      {/* --- HISTORY TAB --- */}
+      {activeTab === 'history' && (
+        <div className={styles.historyContainer}>
+            {history.map((h, idx) => (
+                <div key={idx} className={styles.historyItem}>
+                    <div className={styles.historyHeader}>
+                        <span className={styles.historyVersion}>v{h.version}</span>
+                        <span className={styles.historyDate}>{new Date(h.timestamp).toLocaleString()}</span>
+                    </div>
+                    {h.testInput && (
+                        <div style={{fontSize:'0.75rem', opacity:0.6, marginTop:'5px', fontStyle:'italic'}}>
+                            Test Input used: {h.testInput.substring(0, 60)}{h.testInput.length>60?"...":""}
+                        </div>
+                    )}
+                    <div className={styles.historyPreview}>{h.content}</div>
+                    <button className={styles.btnRestore} onClick={() => handleRestore(h)}>↺ Restore</button>
+                </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+--- Файл: src\components\PromptEditor\PromptEditor.module.css ---
+
+/* src/components/PromptEditor/PromptEditor.module.css */
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.titleInput {
+  font-size: 1.5rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--foreground);
+  width: 100%;
+  outline: none;
+  padding: 0.25rem 0;
+  transition: border-color 0.2s;
+}
+
+.titleInput:focus {
+  border-bottom: 1px solid var(--primary);
+}
+
+.titleInput::placeholder {
+  color: var(--foreground);
+  opacity: 0.3;
+  font-style: italic;
+}
+
+/* --- Вкладки --- */
+.tabs {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.tab {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--foreground);
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  opacity: 1;
+}
+
+.activeTab {
+  opacity: 1;
+  color: var(--primary);
+  border-bottom: 2px solid var(--primary);
+}
+
+/* --- Новые стили для лейблов ролей (SYSTEM / USER) --- */
+.roleLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.roleBadge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.roleSystem {
+  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.roleUser {
+  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.roleDesc {
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+/* --- Текстовые поля --- */
+.contentArea {
+  flex: 1;
+  width: 100%;
+  min-height: 400px;
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 1rem;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--background);
+  color: var(--foreground);
+  resize: vertical;
+  outline: none;
+}
+
+.contentArea:focus {
+  border-color: var(--primary);
+}
+
+.testInputArea {
+  width: 100%;
+  min-height: 80px;
+  padding: 0.8rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  resize: vertical;
+  margin-bottom: 0.5rem;
+}
+
+.testInputArea:focus {
+  outline: 2px solid #22c55e; /* Зеленый фокус для User Input */
+  border-color: transparent;
+}
+
+/* --- Footer Actions --- */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 1rem;
+}
+
+.actionsRight {
+  display: flex;
+  gap: 1rem;
+}
+
+.btnPrimary {
+  background-color: var(--primary);
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.btnPrimary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btnSecondary {
+  background-color: transparent;
+  color: var(--foreground);
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btnSecondary:hover {
+  background-color: var(--background);
+  border-color: var(--foreground);
+}
+
+.btnDelete {
+  background-color: transparent;
+  color: #ef4444;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  font-weight: 500;
+  opacity: 0.8;
+  transition: all 0.2s;
+}
+
+.btnDelete:hover {
+  background-color: #fef2f2;
+  opacity: 1;
+}
+
+.btnDeleteConfirm {
+  background-color: #ef4444;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  font-weight: 700;
+  animation: pulse 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* --- Run Tab Specifics --- */
+.runContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.runControls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background-color: var(--background);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.runTopBar {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.runResult {
+  flex: 1;
+  min-height: 300px;
+  padding: 1.5rem;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  line-height: 1.6;
+  overflow-y: auto;
+}
+
+/* Markdown Styles inside Result */
+.runResult h1, .runResult h2, .runResult h3 { margin-top: 1rem; margin-bottom: 0.5rem; color: #fff; }
+.runResult p { margin-bottom: 1rem; }
+.runResult code { background-color: #2d2d2d; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+.runResult pre { background-color: #2d2d2d; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; }
+.runResult pre code { background-color: transparent; padding: 0; }
+.runResult ul, .runResult ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+.runResult li { margin-bottom: 0.5rem; }
+
+.error { color: #ef4444; font-weight: bold; }
+
+/* --- History Tab Styles --- */
+.historyContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  max-height: 600px;
+}
+
+.historyItem {
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color 0.2s;
+}
+
+.historyItem:hover {
+  border-color: var(--primary);
+}
+
+.historyHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.historyVersion {
+  font-weight: 700;
+  font-size: 0.9rem;
+  background-color: var(--border);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  color: var(--foreground);
+}
+
+.historyDate {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.historyPreview {
+  font-family: monospace;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  background-color: rgba(0,0,0,0.03);
+  padding: 0.5rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3; /* Показываем только 3 строки */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.btnRestore {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.btnRestore:hover {
+  background-color: var(--primary);
+  color: white;
+}
+
+.emptyHistory {
+  text-align: center;
+  opacity: 0.5;
+  margin-top: 2rem;
+  font-style: italic;
+}
+
+/* --- ARENA MODE STYLES --- */
+
+/* Переключатель режимов внутри Run */
+.modeToggle {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.2rem;
+  border-radius: 6px;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  width: fit-content;
+}
+
+.modeBtn {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: all 0.2s;
+}
+
+.modeBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* Сетка Арены */
+.arenaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  height: 100%;
+  min-height: 400px;
+}
+
+.arenaCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background-color: rgba(0,0,0,0.02);
+}
+
+.arenaColHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.colLabel {
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.arenaResult {
+  flex: 1;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  font-size: 0.9rem;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+}
+
+/* Адаптив: на мобилках арена превращается в колонку */
+@media (max-width: 768px) {
+  .arenaGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- MANUAL MODE STYLES --- */
+.manualContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem;
+  background-color: var(--background);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.manualStep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stepLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+  opacity: 0.6;
+}
+
+.copyRow {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btnCopy {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 600;
+  transition: all 0.2s;
+  color: var(--foreground);
+}
+
+.btnCopy:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(37, 99, 235, 0.05);
+}
+
+.externalLinks {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+.linkBtn {
+  font-size: 0.9rem;
+  text-decoration: underline;
+  color: var(--primary);
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.linkBtn:hover {
+  opacity: 1;
+}
+
+.manualResultArea {
+  width: 100%;
+  min-height: 150px;
+  padding: 0.8rem;
+  background-color: var(--background); /* Чуть темнее чем карточка */
+  color: var(--foreground);            /* <--- ВОТ ЭТО ИСПРАВИТ ЧЕРНЫЙ ТЕКСТ */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: monospace;
+  resize: vertical;
+}
+
+.manualResultArea:focus {
+  outline: 2px solid var(--primary);
+  border-color: transparent;
+}
+
+/* --- Execution Mode Switcher (Manual vs Auto) --- */
+.executionSwitchContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.executionSwitch {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.25rem;
+  border-radius: 8px;
+  gap: 0.25rem;
+}
+
+.execBtn {
+  padding: 0.4rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  opacity: 0.6;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.execBtn:hover {
+  opacity: 1;
+}
+
+.execBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* --- COMPARE TAB --- */
+.compareContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.compareControls {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compareSelector {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compareSelect {
+  width: 100%;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-color: var(--card-bg);
+  color: var(--foreground);
+}
+
+.diffGrid {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  overflow: hidden; /* Чтобы скроллились колонки внутри */
+}
+
+.diffCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.diffBox {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--background);
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.diffLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.5;
+  margin-bottom: 0.3rem;
+}
+
+/* Цвета для diff */
+.diffAdded {
+  background-color: rgba(34, 197, 94, 0.2); /* Зеленый фон */
+  color: #15803d;
+  text-decoration: none;
+}
+
+.diffRemoved {
+  background-color: rgba(239, 68, 68, 0.2); /* Красный фон */
+  color: #b91c1c;
+  text-decoration: line-through;
+}
+
+/* Dark mode overrides for diff colors */
+@media (prefers-color-scheme: dark) {
+  .diffAdded {
+    background-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+  .diffRemoved {
+    background-color: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+}
+
+/* --- НОВЫЕ СТИЛИ ДЛЯ ИНТЕРФЕЙСА --- */
+
+/* 1. Бейджи Ролей (SYSTEM / USER) */
+.roleLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.roleBadge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.roleSystem {
+  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.roleUser {
+  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.roleDesc {
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+/* 2. Переключатель Режимов (Manual / Auto) */
+.executionSwitchContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.executionSwitch {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.25rem;
+  border-radius: 8px;
+  gap: 0.25rem;
+}
+
+.execBtn {
+  padding: 0.4rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  opacity: 0.6;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.execBtn:hover {
+  opacity: 1;
+}
+
+.execBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* 3. Manual Mode (Librarian) */
+.manualContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  background-color: var(--background);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.manualStep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stepLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+  opacity: 0.6;
+  letter-spacing: 0.5px;
+}
+
+.copyRow {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btnCopy {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 600;
+  transition: all 0.2s;
+  color: var(--foreground);
+}
+
+.btnCopy:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(37, 99, 235, 0.05);
+}
+
+.externalLinks {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  padding: 0.5rem;
+}
+
+.linkBtn {
+  font-size: 0.9rem;
+  text-decoration: underline;
+  color: var(--primary);
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.linkBtn:hover {
+  opacity: 1;
+}
+
+.manualResultArea {
+  width: 100%;
+  min-height: 120px;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  color: var(--foreground); /* Исправление черного текста */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: monospace;
+  resize: vertical;
+  outline: none;
+}
+
+.manualResultArea:focus {
+  border-color: var(--primary);
+}
+
+/* 4. Compare Tab (Diff) */
+.compareContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.compareControls {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compareSelector {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compareSelect {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.diffGrid {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  overflow: hidden;
+}
+
+.diffCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.diffBox {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--background);
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+.diffLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.5;
+  margin-bottom: 0.3rem;
+}
+
+/* Цвета для diff */
+.diffAdded {
+  background-color: #dcfce7; /* Light Green */
+  color: #166534;
+  text-decoration: none;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.diffRemoved {
+  background-color: #fee2e2; /* Light Red */
+  color: #991b1b;
+  text-decoration: line-through;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Dark mode overrides for diff colors */
+@media (prefers-color-scheme: dark) {
+  .diffAdded {
+    background-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+  .diffRemoved {
+    background-color: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+}
+
+/* Arena Grid Styles (Если их не было) */
+.arenaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  height: 100%;
+  min-height: 400px;
+}
+
+.arenaCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background-color: rgba(0,0,0,0.02);
+}
+
+.arenaColHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.colLabel {
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.arenaResult {
+  flex: 1;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  font-size: 0.9rem;
+  overflow-y: auto;
+  font-family: monospace;
+}
+
+@media (max-width: 768px) {
+  .arenaGrid {
+    grid-template-columns: 1fr;
+  }
+  .diffGrid {
+    flex-direction: column;
+  }
+}
+
+--- Файл: src\components\Settings\Settings.js ---
+
+/* src/components/Settings/Settings.js */
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import styles from "./Settings.module.css";
+import { storageService } from "@/services/storage";
+import { llmService } from "@/services/llm";
+import { userService } from "@/services/user";
+import { googleService } from "@/services/google";
+
+// Ссылка на магазин кодов (Вставь свою реальную ссылку Digiseller/Plati)
+const BUY_LINK = "https://oplata.info/asp2/pay.asp?id_d=5636310"; 
+
+export default function Settings({ onDataChanged }) {
+  const fileInputRef = useRef(null);
+  const providers = llmService.getProviders();
+  const [isPro, setIsPro] = useState(false); // Загружаем асинхронно
+
+  // State
+  const [selectedProvider, setSelectedProvider] = useState(providers[0]?.id || "openai");
+  const [apiKeys, setApiKeys] = useState({});
+  const [showKey, setShowKey] = useState(false);
+  const [message, setMessage] = useState("");
+  const [stats, setStats] = useState({ count: 0, lastUpdate: "Loading..." });
+
+  // Новые стейты для статуса и лицензии
+  const [userStatus, setUserStatus] = useState("Loading...");
+  const [licenseKey, setLicenseKey] = useState("");
+
+  // Google State
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const initData = async () => {
+        try {
+            const keys = await storageService.getAllApiKeys();
+            setApiKeys(keys);
+            
+            const prompts = await storageService.getAllPrompts();
+            setStats({
+              count: prompts.length,
+              lastUpdate: prompts.length > 0 ? new Date(prompts[0].updatedAt).toLocaleDateString() : "No Data"
+            });
+
+            // Загружаем PRO статус
+            const pro = await userService.isPro();
+            setIsPro(pro);
+
+            // Получаем расширенный текстовый статус
+            const statusLabel = await userService.getStatusLabel();
+            setUserStatus(statusLabel);
+
+            // Загружаем сохраненный ключ
+            const savedLicense = await storageService.getSetting("license_key");
+            setLicenseKey(savedLicense || "");
+
+            if (localStorage.getItem("pv_google_token")) {
+                setIsGoogleConnected(true);
+            }
+        } catch (e) {
+            console.error("Settings load error:", e);
+        }
+    };
+    initData();
+  }, []);
+
+  const showToast = (msg) => {
+    setMessage(msg);
+    setTimeout(() => setMessage(""), 3000);
+  };
+
+  // ИСПРАВЛЕННЫЙ ОБРАБОТЧИК: Проверка лицензии через сервер
+  const handleSaveLicense = async () => {
+    if (!licenseKey.trim()) return;
+
+    showToast("Connecting to server...");
+    
+    // 1. Сохраняем локально
+    await storageService.saveSetting("license_key", licenseKey.trim());
+    
+    // 2. Проверяем валидность
+    const isValid = await userService.verifyKeyOnServer(licenseKey.trim());
+    
+    if (isValid) {
+        setIsPro(true);
+        const newStatus = await userService.getStatusLabel();
+        setUserStatus(newStatus);
+        
+        // 3. НОВОЕ: Если подключен Google — сразу пушим бэкап с ключом
+        if (isGoogleConnected) {
+             showToast("✅ Active! Syncing license to Cloud...");
+             try {
+                 const rawData = await storageService.getRawData(); // Теперь тут есть licenseKey
+                 await googleService.uploadBackup(rawData);
+             } catch(e) {
+                 console.warn("Auto-backup of license failed", e);
+             }
+        } else {
+             showToast("✅ License Activated! PRO features unlocked.");
+        }
+
+        if (onDataChanged) onDataChanged(); 
+    } else {
+        showToast("❌ Invalid or Used Key");
+        setUserStatus("Trial (Activation Failed)");
+    }
+  };
+
+  // --- GOOGLE HANDLERS ---
+  const handleGoogleLogin = async () => {
+    try {
+        await googleService.login();
+        setIsGoogleConnected(true);
+        showToast("✅ Connected. Checking cloud backup...");
+        
+        setIsSyncing(true);
+        
+        // 1. PULL
+        const cloudData = await googleService.downloadBackup();
+        let mergedCount = 0;
+        
+        if (cloudData) {
+            mergedCount = await storageService.mergeData(cloudData);
+            
+            // UI Update (Stats)
+            const prompts = await storageService.getAllPrompts();
+            setStats({
+              count: prompts.length,
+              lastUpdate: prompts.length > 0 ? new Date(prompts[0].updatedAt).toLocaleDateString() : "No Data"
+            });
+            
+            // НОВОЕ: АВТО-АКТИВАЦИЯ
+            // Если ключ прилетел из облака, проверяем его молча
+            const importedKey = await storageService.getSetting("license_key");
+            if (importedKey) {
+                console.log("Found license in cloud, verifying...");
+                // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
+                const isValid = await userService.verifyKeyOnServer(importedKey);
+                if (isValid) {
+                    setIsPro(true);
+                    const newStatus = await userService.getStatusLabel();
+                    setUserStatus(newStatus);
+                    setLicenseKey(importedKey); // Заполняем поле ввода
+                }
+            }
+            
+            onDataChanged();
+        } else {
+            showToast("✅ Connected. Cloud is empty.");
+        }
+
+        // 2. PUSH (Если у нас был ключ, а в облаке нет)
+        const currentLicense = await storageService.getSetting("license_key");
+        if (currentLicense && !cloudData?.meta?.licenseKey) {
+            console.log("Pushing local license to cloud...");
+            const rawData = await storageService.getRawData();
+            await googleService.uploadBackup(rawData);
+            showToast(`✅ Synced! License saved to Cloud.`);
+        } else if (mergedCount > 0) {
+            showToast(`✅ Synced! Merged ${mergedCount} prompts.`);
+        }
+
+    } catch (e) {
+        console.error(e);
+        showToast("❌ Login / Sync Failed");
+    } finally {
+        setIsSyncing(false);
+    }
+  };
+
+  const handleGoogleLogout = () => {
+    googleService.logout();
+    setIsGoogleConnected(false);
+    showToast("Disconnected from Google");
+  };
+
+  const handleForceSync = async () => {
+    if (!isGoogleConnected) return;
+    setIsSyncing(true);
+    try {
+        // 1. PULL
+        showToast("⬇️ Pulling from Cloud...");
+        const cloudData = await googleService.downloadBackup();
+        
+        let mergedCount = 0;
+        if (cloudData) {
+            mergedCount = await storageService.mergeData(cloudData);
+        }
+
+        // ... (Safety Check код без изменений) ...
+        const allPrompts = await storageService.getAllPrompts();
+        const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
+        if (allPrompts.length === 0 && cloudHasPrompts) {
+            alert("⚠️ SAFETY STOP: Cloud has data, but local database is empty after merge.\nUpload aborted.");
+            return; 
+        }
+
+        // 2. PUSH
+        showToast("⬆️ Pushing to Cloud...");
+        const rawData = await storageService.getRawData(); 
+        const addedRows = await googleService.syncEverything(rawData, allPrompts);
+        
+        storageService.clearDeletedLog(); 
+        
+        // 3. UI & AUTO-VERIFY
+        setStats({
+          count: allPrompts.length,
+          lastUpdate: allPrompts.length > 0 ? new Date(allPrompts[0].updatedAt).toLocaleDateString() : "No Data"
+        });
+        
+        // НОВОЕ: Проверяем статус после синка (вдруг ключ восстановился)
+        const key = await storageService.getSetting("license_key");
+        if (key) {
+             const isValid = await userService.verifyKeyOnServer(key);
+             if (isValid) setIsPro(true);
+        }
+        
+        const newStatus = await userService.getStatusLabel();
+        setUserStatus(newStatus);
+        
+        onDataChanged(); 
+
+        let msg = "✅ Sync Complete.";
+        if (mergedCount > 0) msg += ` Pulled ${mergedCount}.`;
+        if (addedRows > 0) msg += ` Logged ${addedRows}.`;
+        showToast(msg);
+
+    } catch (e) {
+        console.error(e);
+        showToast("❌ Sync Error");
+    } finally {
+        setIsSyncing(false);
+    }
+  };
+
+  // --- EXISTING HANDLERS ---
+
+  const handleSaveKey = async () => {
+    const keyToSave = apiKeys[selectedProvider] || "";
+    await storageService.setApiKey(selectedProvider, keyToSave.trim());
+    showToast(`🔐 Key for ${selectedProvider} Updated Successfully`);
+  };
+
+  const handleKeyInputChange = (e) => {
+    const val = e.target.value;
+    setApiKeys(prev => ({
+      ...prev,
+      [selectedProvider]: val
+    }));
+  };
+
+  const handleExport = async () => {
+    const data = await storageService.getRawData();
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `promptvault_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("📦 Export Complete");
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const success = await storageService.importData(event.target.result);
+      if (success) {
+        showToast("✅ Database Restored!");
+        setTimeout(() => onDataChanged(), 1000);
+      } else {
+        showToast("❌ Invalid JSON File");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = null;
+  };
+
+  const handleClear = async () => {
+    if (confirm("⚠️ IRREVERSIBLE ACTION\n\nAre you sure you want to delete ALL your prompts?")) {
+      await storageService.clearAll();
+      onDataChanged();
+      showToast("🗑️ System Wiped Clean");
+    }
+  };
+
+  const currentKey = apiKeys[selectedProvider] || "";
+  const isKeyActive = currentKey.length > 10;
+  const currentProviderName = providers.find(p => p.id === selectedProvider)?.name || selectedProvider;
+
+  return (
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <h1 className={styles.pageTitle}>System Settings</h1>
+        <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
+            <span className={styles.pageSubtitle}>Current Plan:</span>
+            <span className={isPro ? styles.badgeSuccess : styles.badgeError} style={{padding:'4px 8px', borderRadius:'4px', fontSize: '0.8rem'}}>
+                {userStatus}
+            </span>
+        </div>
+      </div>
+
+      {/* --- PRO UPGRADE CARD --- */}
+      {!isPro && (
+          <div className={styles.card} style={{borderColor: '#fbbf24', backgroundColor: 'rgba(251, 191, 36, 0.05)'}}>
+            <div className={styles.cardHeader}>
+                <div className={styles.cardTitleFlex}>
+                    <span className={styles.cardIcon}>👑</span>
+                    <div>
+                        <div className={styles.cardTitle}>Upgrade to The Automator</div>
+                        <div className={styles.cardDesc}>Unlock unlimited runs & Arena mode</div>
+                    </div>
+                </div>
+            </div>
+            <div className={styles.cardBody}>
+                {/* ВАЖНОЕ ПРЕДУПРЕЖДЕНИЕ ПЕРЕД ПОКУПКОЙ */}
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.8rem',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.2)',
+                    borderRadius: '6px',
+                    fontSize: '0.8rem',
+                    lineHeight: '1.4'
+                }}>
+                    <strong>⚠️ Important:</strong> Before buying PRO, please utilize the <strong>10 Free Trial runs</strong> to ensure AI APIs work on your network.
+                    <br/>If you find any bugs, email: <strong>milligat13@gmail.com</strong>
+                </div>
+
+                <div className={styles.inputGroup}>
+                    <label className={styles.label}>Enter License Key</label>
+                    <div className={styles.inputRow}>
+                        <input 
+                            type="text" 
+                            className={styles.textInput} 
+                            placeholder="PV-XXXX-XXXX-XXXX"
+                            value={licenseKey}
+                            onChange={(e) => setLicenseKey(e.target.value)}
+                        />
+                        <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={handleSaveLicense}>Activate</button>
+                    </div>
+                    
+                    <div style={{marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
+                        <p style={{fontSize:'0.8rem', opacity:0.6}}>
+                            <a href={BUY_LINK} target="_blank" style={{textDecoration:'underline', color:'var(--primary)', fontWeight:'bold'}}>
+                                Buy License Key ($9)
+                            </a>
+                        </p>
+                        
+                        {/* НОВОЕ ПРЕДУПРЕЖДЕНИЕ */}
+                        <div style={{
+                            fontSize: '0.8rem', 
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)', // Синий оттенок
+                            padding: '10px', 
+                            borderRadius: '6px',
+                            border: '1px solid rgba(59, 130, 246, 0.2)',
+                            color: 'var(--foreground)',
+                            lineHeight: '1.4'
+                        }}>
+                           💡 <strong>Recommendation:</strong> Please sign in with <strong>Google</strong> (below) to sync your license key. Otherwise, you might lose your PRO status if you clear browser cache.
+                        </div>
+                    </div>
+                </div>
+            </div>
+          </div>
+      )}
+
+      {/* --- AI ENGINE CARD --- */}
+      <div className={styles.card} style={{ position: 'relative', overflow: 'hidden' }}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardTitleFlex}>
+            <span className={styles.cardIcon}>🤖</span>
+            <div>
+              <div className={styles.cardTitle}>AI Integration</div>
+              <div className={styles.cardDesc}>Connect to LLM providers (BYOK)</div>
+            </div>
+          </div>
+          <span className={isKeyActive ? `${styles.badge} ${styles.badgeSuccess}` : `${styles.badge} ${styles.badgeError}`}>
+            {isKeyActive ? "Ready" : "No Key"}
+          </span>
+        </div>
+        
+        <div className={styles.cardBody}>
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>Select Provider</label>
+            <select 
+                className={styles.textInput} 
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+            >
+              {providers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className={styles.inputGroup}>
+            <label className={styles.label}>API Key for {currentProviderName}</label>
+            <div className={styles.inputRow}>
+              <input 
+                type={showKey ? "text" : "password"} 
+                className={styles.textInput}
+                placeholder={`Enter ${selectedProvider} API Key...`}
+                value={currentKey}
+                onChange={handleKeyInputChange}
+              />
+              <button 
+                className={styles.btnOutline} 
+                onClick={() => setShowKey(!showKey)} 
+                title="Toggle Visibility"
+              >
+                {showKey ? "👁️" : "🔒"}
+              </button>
+            </div>
+            <p style={{fontSize: '0.8rem', opacity: 0.5, marginTop: '5px'}}>
+              Your key is stored locally in your browser. We never see it.
+            </p>
+          </div>
+
+          <div style={{display: 'flex', justifyContent: 'flex-end'}}>
+             <button 
+                className={`${styles.btn} ${styles.btnPrimary}`} 
+                onClick={handleSaveKey}
+             >
+               Save {currentProviderName} Key
+             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* --- CLOUD SYNC CARD --- */}
+      <div className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardTitleFlex}>
+            <span className={styles.cardIcon}>☁️</span>
+            <div>
+              <div className={styles.cardTitle}>Cloud Sync (Google Drive)</div>
+              <div className={styles.cardDesc}>Backup DB & Sync history to Sheets</div>
+            </div>
+          </div>
+          <span className={isGoogleConnected ? `${styles.badge} ${styles.badgeSuccess}` : `${styles.badge} ${styles.badgeError}`}>
+            {isGoogleConnected ? "Connected" : "Offline"}
+          </span>
+        </div>
+        <div className={styles.cardBody}>
+            {!isGoogleConnected ? (
+                <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={handleGoogleLogin} style={{width: '100%'}}>
+                    Sign in with Google
+                </button>
+            ) : (
+                <div style={{display:'flex', flexDirection:'column', gap:'1rem'}}>
+                    <p style={{fontSize:'0.9rem', opacity:0.7}}>
+                        ✅ Connected.<br/>
+                        Prompts save automatically. Use "Force Sync" if you worked offline.
+                    </p>
+                    <button 
+                        className={`${styles.btn} ${styles.btnPrimary}`} 
+                        onClick={handleForceSync}
+                        disabled={isSyncing}
+                    >
+                        {isSyncing ? "⏳ Syncing..." : "🔄 Force Sync All Now"}
+                    </button>
+                    
+                    <button className={`${styles.btn} ${styles.btnOutline}`} onClick={handleGoogleLogout}>
+                        Disconnect Account
+                    </button>
+                </div>
+            )}
+        </div>
+      </div>
+
+      {/* --- BACKUP CARD --- */}
+      <div className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardTitleFlex}>
+            <span className={styles.cardIcon}>💾</span>
+            <div>
+              <div className={styles.cardTitle}>Storage & Backup</div>
+              <div className={styles.cardDesc}>Manage your prompt database</div>
+            </div>
+          </div>
+          <span className={`${styles.badge} ${styles.badgeSuccess}`}>
+             Local Storage
+          </span>
+        </div>
+
+        <div className={styles.cardBody}>
+          <div className={styles.statsGrid}>
+            <div className={styles.statItem}>
+              <div className={styles.statValue}>{stats.count}</div>
+              <div className={styles.statLabel}>Total Prompts</div>
+            </div>
+            <div className={styles.statItem}>
+              <div className={styles.statValue}>JSON</div>
+              <div className={styles.statLabel}>Format</div>
+            </div>
+          </div>
+
+          <div className={styles.inputRow} style={{marginTop: '1.5rem'}}>
+            <button className={`${styles.btn} ${styles.btnOutline}`} style={{flex: 1}} onClick={handleExport}>
+              ⬇️ Export Backup
+            </button>
+            <button className={`${styles.btn} ${styles.btnOutline}`} style={{flex: 1}} onClick={() => fileInputRef.current?.click()}>
+              ⬆️ Restore from File
+            </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              accept=".json" 
+              className={styles.fileInput} 
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* --- DANGER ZONE --- */}
+      <div className={`${styles.card} ${styles.dangerCard}`}>
+        <div className={`${styles.cardHeader} ${styles.dangerHeader}`}>
+          <div className={styles.cardTitleFlex}>
+            <span className={styles.cardIcon}>☢️</span>
+            <div>
+              <div className={styles.cardTitle}>Danger Zone</div>
+            </div>
+          </div>
+        </div>
+        <div className={styles.cardBody}>
+          <p style={{fontSize: '0.9rem', marginBottom: '1rem', opacity: 0.8}}>
+            Deleting your database will permanently remove all {stats.count} prompts. This action cannot be undone.
+          </p>
+          <button className={`${styles.btn} ${styles.btnDanger}`} onClick={handleClear}>
+            Delete All Data
+          </button>
+        </div>
+      </div>
+
+      <div className={`${styles.toast} ${message ? styles.toastVisible : ''}`}>
+        {message}
+      </div>
+    </div>
+  );
+}
+
+--- Файл: src\components\Settings\Settings.module.css ---
+
+/* src/components/Settings/Settings.module.css */
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  max-width: 900px; /* Ограничим ширину для читаемости */
+  margin: 0 auto;
+}
+
+.header {
+  margin-bottom: 1rem;
+}
+
+.pageTitle {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.pageSubtitle {
+  color: var(--foreground);
+  opacity: 0.6;
+}
+
+/* Карточка настройки */
+.card {
+  background-color: var(--background); /* Чуть темнее чем основная карта */
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.cardHeader {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background-color: rgba(255,255,255,0.03);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cardTitleFlex {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.cardIcon {
+  font-size: 1.5rem;
+}
+
+.cardTitle {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.cardDesc {
+  font-size: 0.85rem;
+  opacity: 0.6;
+  margin-top: 4px;
+  font-weight: normal;
+}
+
+.cardBody {
+  padding: 1.5rem;
+}
+
+/* Элементы управления внутри карты */
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.inputRow {
+  display: flex;
+  gap: 1rem;
+}
+
+.textInput {
+  flex: 1;
+  padding: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  font-family: monospace;
+}
+
+.textInput:focus {
+  outline: 2px solid var(--primary);
+  border-color: transparent;
+}
+
+/* Статусы */
+.badge {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badgeSuccess {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.badgeError {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid #ef4444;
+}
+
+/* Статистика */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.statItem {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  padding: 1rem;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.statValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.statLabel {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+/* Кнопки */
+.btn {
+  padding: 0.8rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s;
+  justify-content: center;
+}
+
+.btnPrimary {
+  background-color: var(--primary);
+  color: white;
+}
+
+.btnPrimary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btnOutline {
+  background-color: transparent;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.btnOutline:hover {
+  border-color: var(--foreground);
+  background-color: var(--background);
+}
+
+.btnDanger {
+  background-color: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  width: 100%;
+}
+
+.btnDanger:hover {
+  background-color: #ef4444;
+  color: white;
+}
+
+.fileInput {
+  display: none;
+}
+
+/* Danger Zone Special */
+.dangerCard {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.dangerHeader {
+  background-color: rgba(239, 68, 68, 0.05);
+  color: #ef4444;
+}
+
+/* Toast Notification (Small fix) */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background-color: var(--foreground);
+  color: var(--background);
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.3s;
+  z-index: 100;
+}
+
+.toastVisible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+--- Файл: src\services\google.js ---
+
+/* src/services/google.js */
+
+// КОНФИГУРАЦИЯ
+const CLIENT_ID = "833291081802-47b7ntjqck33dhuldk71gpkqkp82edoj.apps.googleusercontent.com"; 
+const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets";
+
+// Имена файлов в облаке
+const DB_FILENAME = "promptvault_backup.json";
+const SHEET_NAME = "PromptVault_History";
+
+let tokenClient;
+let gapiInited = false;
+let gisInited = false;
+let accessToken = null;
+let scriptsLoadingPromise = null;
+
+// Хелпер для получения ID таблицы
+let cachedSpreadsheetId = null;
+
+const getSpreadsheetId = async () => {
+    if (cachedSpreadsheetId) return cachedSpreadsheetId;
+
+    const search = await window.gapi.client.drive.files.list({
+        q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+        fields: 'files(id)',
+    });
+    
+    if (search.result.files && search.result.files.length > 0) {
+        cachedSpreadsheetId = search.result.files[0].id;
+        return cachedSpreadsheetId;
+    }
+    
+    const createRes = await window.gapi.client.sheets.spreadsheets.create({
+        properties: { title: SHEET_NAME }
+    });
+    cachedSpreadsheetId = createRes.result.spreadsheetId;
+    
+    await window.gapi.client.sheets.spreadsheets.values.append({
+        spreadsheetId: cachedSpreadsheetId,
+        range: 'A1',
+        valueInputOption: 'USER_ENTERED',
+        resource: { values: [["Date", "Version", "Title", "System Prompt", "User Input", "Result", "Model", "ID_REF"]] }
+    });
+
+    return cachedSpreadsheetId;
+};
+
+// Внутренняя функция восстановления токена
+const ensureToken = () => {
+    if (!accessToken) {
+        accessToken = localStorage.getItem("pv_google_token");
+    }
+    return accessToken;
+};
+
+// Внутренняя функция инициализации API перед запросом
+const ensureInit = async () => {
+    // 1. Загружаем скрипты, если их нет
+    if (!gapiInited || !gisInited) {
+        await googleService.loadScripts();
+    }
+    
+    // 2. ВАЖНО: Передаем токен в gapi, иначе он делает анонимный запрос (ошибка 403)
+    if (accessToken && window.gapi && window.gapi.client) {
+        const currentToken = window.gapi.client.getToken();
+        if (!currentToken) {
+            window.gapi.client.setToken({ access_token: accessToken });
+        }
+    }
+    
+    return true;
+};
+
+// Обработчик ошибок
+const handleApiError = (e, context) => {
+    console.error(`Google API Error [${context}]:`, JSON.stringify(e, null, 2) || e);
+    
+    // Проверяем коды ошибок:
+    // 401: Expired Token
+    // 403: Permission Denied / Unregistered Caller (токен не применился)
+    const code = e.status || (e.result && e.result.error && e.result.error.code);
+    
+    if (code === 401 || code === 403) {
+        console.warn("Token expired or invalid. Logging out locally.");
+        
+        // Сброс состояния
+        localStorage.removeItem("pv_google_token");
+        accessToken = null;
+        if (window.gapi && window.gapi.client) {
+            window.gapi.client.setToken(null);
+        }
+
+        // Уведомление пользователя
+        alert("Google Session Expired/Invalid. Please disconnect and sign in again.");
+        
+        // Можно перезагрузить страницу, чтобы обновить UI Settings
+        // window.location.reload(); 
+    }
+    throw e;
+};
+
+export const googleService = {
+  
+  // --- ИНИЦИАЛИЗАЦИЯ ---
+  loadScripts: () => {
+    if (scriptsLoadingPromise) return scriptsLoadingPromise;
+
+    scriptsLoadingPromise = new Promise((resolve) => {
+      // Если уже загружено
+      if (typeof window !== 'undefined' && window.gapi && window.google) {
+          gapiInited = true;
+          gisInited = true;
+          resolve(true);
+          return;
+      }
+
+      const script1 = document.createElement("script");
+      script1.src = "https://apis.google.com/js/api.js";
+      script1.onload = () => {
+        window.gapi.load("client", async () => {
+          await window.gapi.client.init({
+            // clientId не обязателен тут для bearer auth, но полезен для контекста
+            discoveryDocs: [
+              "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+              "https://sheets.googleapis.com/$discovery/rest?version=v4"
+            ],
+          });
+          gapiInited = true;
+          if (gisInited) resolve(true);
+        });
+      };
+      document.body.appendChild(script1);
+
+      const script2 = document.createElement("script");
+      script2.src = "https://accounts.google.com/gsi/client";
+      script2.onload = () => {
+        tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: (resp) => {
+            if (resp.error !== undefined) throw (resp);
+            accessToken = resp.access_token;
+            localStorage.setItem("pv_google_token", accessToken);
+            // Сразу устанавливаем токен в gapi
+            if (window.gapi && window.gapi.client) {
+                window.gapi.client.setToken({ access_token: accessToken });
+            }
+          },
+        });
+        gisInited = true;
+        if (gapiInited) resolve(true);
+      };
+      document.body.appendChild(script2);
+    });
+
+    return scriptsLoadingPromise;
+  },
+
+  login: async () => {
+    await googleService.loadScripts();
+    return new Promise((resolve, reject) => {
+      tokenClient.callback = (resp) => {
+        if (resp.error) reject(resp);
+        accessToken = resp.access_token;
+        localStorage.setItem("pv_google_token", accessToken);
+        // Установка токена
+        if (window.gapi && window.gapi.client) {
+            window.gapi.client.setToken({ access_token: accessToken });
+        }
+        resolve(accessToken);
+      };
+      if (accessToken) tokenClient.requestAccessToken({prompt: ''});
+      else tokenClient.requestAccessToken({prompt: 'consent'});
+    });
+  },
+
+  logout: () => {
+    const token = accessToken || localStorage.getItem("pv_google_token");
+    if (token && window.google) {
+      window.google.accounts.oauth2.revoke(token, () => {console.log('Revoked')});
+    }
+    accessToken = null;
+    localStorage.removeItem("pv_google_token");
+    if (window.gapi && window.gapi.client) {
+        window.gapi.client.setToken(null);
+    }
+  },
+
+  isAuthenticated: () => {
+      return !!ensureToken();
+  },
+
+  // --- DRIVE BACKUP (JSON) ---
+  
+  uploadBackup: async (jsonData) => {
+    if (!ensureToken()) return;
+    await ensureInit(); 
+    try {
+        const response = await window.gapi.client.drive.files.list({
+            q: `name = '${DB_FILENAME}' and trashed = false`,
+            fields: 'files(id, name)',
+            spaces: 'drive'
+        });
+        const files = response.result.files;
+        const metadata = { name: DB_FILENAME, mimeType: 'application/json' };
+
+        if (files && files.length > 0) {
+            // ОБНОВЛЕНИЕ
+            const fileId = files[0].id;
+            await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: jsonData
+            });
+        } else {
+            // СОЗДАНИЕ
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], {type: 'application/json'}));
+            form.append('file', new Blob([jsonData], {type: 'application/json'}));
+            await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}` },
+                body: form
+            });
+        }
+    } catch (e) { handleApiError(e, 'uploadBackup'); }
+  },
+
+  // Скачивание бэкапа (Pull)
+  downloadBackup: async () => {
+    if (!ensureToken()) return null;
+    await ensureInit();
+    try {
+        const response = await window.gapi.client.drive.files.list({
+            q: `name = '${DB_FILENAME}' and trashed = false`,
+            fields: 'files(id, name)',
+            spaces: 'drive'
+        });
+        
+        const files = response.result.files;
+        if (files && files.length > 0) {
+            const fileId = files[0].id;
+            // Скачиваем контент
+            const res = await window.gapi.client.drive.files.get({
+                fileId: fileId,
+                alt: 'media'
+            });
+            
+            let data = res.result || res.body;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch(e) { console.warn("Failed to parse cloud JSON"); }
+            }
+            return data;
+        }
+        return null; // Файла нет
+    } catch (e) { 
+        handleApiError(e, 'downloadBackup');
+        return null;
+    }
+  },
+
+  // --- SHEETS LOGGING ---
+  appendToSheet: async (prompt) => {
+    if (!ensureToken()) return;
+    await ensureInit();
+    try {
+        const spreadsheetId = await getSpreadsheetId();
+        const row = [
+            new Date().toLocaleString(),
+            prompt.version || "1",
+            prompt.title,
+            prompt.content,
+            prompt.testInput || "",
+            prompt.lastResult || "",
+            "gpt/claude",
+            prompt.id // ID_REF в конце
+        ];
+        await window.gapi.client.sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'A1',
+            valueInputOption: 'USER_ENTERED',
+            resource: { values: [row] }
+        });
+    } catch (e) { handleApiError(e, 'appendToSheet'); }
+  },
+
+  // --- SMART SYNC (ALL) ---
+  syncEverything: async (rawJsonData, allPrompts) => {
+    if (!ensureToken()) throw new Error("Not authenticated");
+    await ensureInit();
+
+    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount),
+    // а не просто массив промптов.
+    await googleService.uploadBackup(rawJsonData);
+    console.log("Backup synced (with meta).");
+
+    // 2. Умная синхронизация таблицы (остается как было, работает с массивом)
+    try {
+        const spreadsheetId = await getSpreadsheetId();
+        
+        const result = await window.gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'A:H', 
+        });
+
+        const rows = result.result.values || [];
+        
+        const existingSignatures = new Set();
+        rows.forEach((row, index) => {
+            if (index === 0) return;
+            const ver = row[1];
+            const id = row[7];
+            if (id && ver) {
+                existingSignatures.add(`${id}_v${ver}`);
+            }
+        });
+
+        const newRows = [];
+        
+        allPrompts.forEach(p => {
+             const currentSig = `${p.id}_v${p.version || 1}`;
+             if (!existingSignatures.has(currentSig)) {
+                 newRows.push([
+                    new Date(p.updatedAt).toLocaleString(),
+                    p.version || "1",
+                    p.title,
+                    p.content,
+                    p.testInput || "",
+                    p.lastResult || "",
+                    "batch_sync",
+                    p.id
+                 ]);
+             }
+        });
+
+        if (newRows.length > 0) {
+            await window.gapi.client.sheets.spreadsheets.values.append({
+                spreadsheetId,
+                range: 'A1',
+                valueInputOption: 'USER_ENTERED',
+                resource: { values: newRows }
+            });
+            return newRows.length;
+        } else {
+            return 0;
+        }
+
+    } catch (e) {
+        handleApiError(e, 'syncEverything:Sheets');
+        return 0;
+    }
+  }
+};
+
+--- Файл: src\services\storage.js ---
+
+/* src/services/storage.js */
+
+const DB_NAME = "PromptVaultDB";
+const DB_VERSION = 1;
+const STORE_PROMPTS = "prompts";
+const STORE_SETTINGS = "settings";
+const DELETED_LOG_KEY = "pv_deleted_ids_log"; // Лог удаленных ID (Tombstones)
+
+/**
+ * Внутренний хелпер для работы с IndexedDB API (Promise-wrapper)
+ */
+const dbHelper = {
+  open: () => {
+    return new Promise((resolve, reject) => {
+      if (typeof window === "undefined") {
+        reject(new Error("Browser environment required"));
+        return;
+      }
+
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        
+        // Хранилище промптов (ключ = id)
+        if (!db.objectStoreNames.contains(STORE_PROMPTS)) {
+          const store = db.createObjectStore(STORE_PROMPTS, { keyPath: "id" });
+          store.createIndex("updatedAt", "updatedAt", { unique: false });
+          store.createIndex("isDeleted", "isDeleted", { unique: false });
+        }
+
+        // Хранилище настроек и ключей (ключ = setting_key)
+        if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
+          db.createObjectStore(STORE_SETTINGS, { keyPath: "key" });
+        }
+      };
+
+      request.onsuccess = (event) => resolve(event.target.result);
+      request.onerror = (event) => reject(event.target.error);
+    });
+  },
+
+  // Универсальный метод для транзакций
+  transaction: (storeName, mode, callback) => {
+    return dbHelper.open().then((db) => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, mode);
+        const store = tx.objectStore(storeName);
+        const request = callback(store);
+
+        tx.oncomplete = () => resolve(request?.result);
+        tx.onerror = () => reject(tx.error);
+        
+        if (request && request instanceof IDBRequest) {
+            request.onsuccess = () => {}; 
+        }
+      });
+    });
+  },
+
+  getAll: (storeName) => {
+    return dbHelper.open().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    });
+  },
+
+  get: (storeName, key) => {
+    return dbHelper.open().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readonly');
+            const store = tx.objectStore(storeName);
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    });
+  },
+
+  put: (storeName, data) => {
+    return dbHelper.open().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const request = store.put(data);
+            tx.oncomplete = () => resolve(data);
+            tx.onerror = () => reject(tx.error);
+        });
+    });
+  },
+
+  delete: (storeName, key) => {
+    return dbHelper.open().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            store.delete(key);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    });
+  },
+  
+  clear: (storeName) => {
+      return dbHelper.open().then(db => {
+          return new Promise((resolve, reject) => {
+              const tx = db.transaction(storeName, 'readwrite');
+              const store = tx.objectStore(storeName);
+              store.clear();
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+          });
+      });
+  }
+};
+
+export const storageService = {
+  // --- PROMPTS MANAGEMENT ---
+
+  getAllPrompts: async () => {
+    try {
+      const prompts = await dbHelper.getAll(STORE_PROMPTS);
+      return prompts.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    } catch (e) {
+      console.error("Failed to load prompts form IDB:", e);
+      return [];
+    }
+  },
+
+  savePrompt: async (promptData) => {
+    const now = new Date().toISOString();
+    
+    let existing = null;
+    if (promptData.id) {
+        existing = await dbHelper.get(STORE_PROMPTS, promptData.id);
+    }
+
+    let payload = {
+      ...promptData,
+      updatedAt: now,
+      testInput: promptData.testInput || "",
+      lastResult: promptData.lastResult || "",
+      tags: promptData.tags || [],
+      isFavorite: promptData.isFavorite || false,
+      isDeleted: promptData.isDeleted || false
+    };
+
+    if (existing) {
+      // Версионирование
+      const isTitleSame = existing.title === payload.title;
+      const isContentSame = existing.content === payload.content;
+      const isTestInputSame = (existing.testInput || "") === (payload.testInput || "");
+      const isTagsSame = JSON.stringify(existing.tags || []) === JSON.stringify(payload.tags || []);
+
+      const isContentIdentical = isTitleSame && isContentSame && isTestInputSame && isTagsSame;
+
+      if (isContentIdentical) {
+        const updatedNoVersionChange = {
+            ...existing,
+            updatedAt: now,
+            lastResult: payload.lastResult,
+            isFavorite: payload.isFavorite,
+            isDeleted: payload.isDeleted,
+            tags: payload.tags 
+        };
+        return await dbHelper.put(STORE_PROMPTS, updatedNoVersionChange);
+      } else {
+        const historySnapshot = {
+            version: existing.version || 1, 
+            timestamp: existing.updatedAt || existing.createdAt || now,
+            title: existing.title,
+            content: existing.content,
+            testInput: existing.testInput || "",
+            tags: existing.tags || []
+        };
+
+        payload.createdAt = existing.createdAt;
+        payload.version = (existing.version || 1) + 1;
+        
+        if (payload.isFavorite === undefined) payload.isFavorite = existing.isFavorite;
+        if (payload.isDeleted === undefined) payload.isDeleted = existing.isDeleted;
+
+        payload.history = [
+            ...(existing.history || []), 
+            historySnapshot
+        ];
+
+        return await dbHelper.put(STORE_PROMPTS, payload);
+      }
+    } else {
+      payload.id = payload.id || crypto.randomUUID();
+      payload.createdAt = now;
+      payload.version = 1;
+      payload.history = [];
+      
+      return await dbHelper.put(STORE_PROMPTS, payload);
+    }
+  },
+
+  deletePrompt: async (id) => {
+    const prompt = await dbHelper.get(STORE_PROMPTS, id);
+    if (prompt) {
+        prompt.isDeleted = true;
+        prompt.updatedAt = new Date().toISOString();
+        await dbHelper.put(STORE_PROMPTS, prompt);
+    }
+  },
+
+  restorePrompt: async (id) => {
+    const prompt = await dbHelper.get(STORE_PROMPTS, id);
+    if (prompt) {
+        prompt.isDeleted = false;
+        await dbHelper.put(STORE_PROMPTS, prompt);
+    }
+  },
+
+  // Полное удаление с добавлением в Черный список
+  permanentDelete: async (id) => {
+    // 1. Удаляем из базы
+    await dbHelper.delete(STORE_PROMPTS, id);
+    
+    // 2. Добавляем ID в "Черный список", чтобы он не вернулся из облака
+    try {
+        const deletedLog = JSON.parse(localStorage.getItem(DELETED_LOG_KEY) || "[]");
+        if (!deletedLog.includes(id)) {
+            deletedLog.push(id);
+            localStorage.setItem(DELETED_LOG_KEY, JSON.stringify(deletedLog));
+        }
+    } catch (e) {
+        console.error("Failed to update deleted log", e);
+    }
+  },
+
+  toggleFavorite: async (id) => {
+    const prompt = await dbHelper.get(STORE_PROMPTS, id);
+    if (prompt) {
+        prompt.isFavorite = !prompt.isFavorite;
+        await dbHelper.put(STORE_PROMPTS, prompt);
+    }
+  },
+
+  // --- DATA EXPORT/IMPORT & SYNC ---
+
+  // Получаем JSON для экспорта/бэкапа (с ЛИЦЕНЗИЕЙ и DEVICE ID)
+  getRawData: async () => {
+    const allPrompts = await dbHelper.getAll(STORE_PROMPTS);
+    const usageCount = await storageService.getUsageCount(); 
+    
+    // Достаем ключ лицензии для сохранения
+    const licenseKey = await storageService.getSetting("license_key");
+    
+    // НОВОЕ: Достаем ID устройства, чтобы сохранить его
+    const deviceIdRecord = await dbHelper.get(STORE_SETTINGS, "device_installation_id");
+    const deviceId = deviceIdRecord ? deviceIdRecord.value : null;
+    
+    const exportData = {
+        prompts: allPrompts,
+        meta: {
+            exportedAt: new Date().toISOString(),
+            usageCount: usageCount,
+            licenseKey: licenseKey || null, // Сохраняем ключ
+            deviceId: deviceId || null // <--- СОХРАНЯЕМ ID
+        }
+    };
+    
+    return JSON.stringify(exportData, null, 2);
+  },
+
+  importData: async (jsonString) => {
+    try {
+      const data = JSON.parse(jsonString);
+      
+      let promptsToImport = [];
+      let importedUsage = 0;
+      let importedLicense = null;
+      let importedDeviceId = null;
+
+      if (Array.isArray(data)) {
+          promptsToImport = data;
+      } else if (data.prompts) {
+          promptsToImport = data.prompts;
+          importedUsage = data.meta?.usageCount || 0;
+          importedLicense = data.meta?.licenseKey || null; // Читаем ключ
+          importedDeviceId = data.meta?.deviceId || null; // <--- ЧИТАЕМ ID
+      }
+      
+      await dbHelper.clear(STORE_PROMPTS);
+
+      for (const item of promptsToImport) {
+          if (item.title) {
+              await dbHelper.put(STORE_PROMPTS, item);
+          }
+      }
+
+      // Синхронизация счетчика
+      const currentUsage = await storageService.getUsageCount();
+      if (importedUsage > currentUsage) {
+          await storageService.setUsageCount(importedUsage);
+      }
+
+      // Восстановление лицензии
+      if (importedLicense) {
+          await storageService.saveSetting("license_key", importedLicense);
+      }
+      
+      // НОВОЕ: Восстанавливаем ID устройства
+      if (importedDeviceId) {
+          await dbHelper.put(STORE_SETTINGS, { 
+              key: "device_installation_id", 
+              value: importedDeviceId, 
+              type: "system" 
+          });
+      }
+
+      return true;
+    } catch (e) {
+      console.error("Import failed", e);
+      return false;
+    }
+  },
+
+  // Слияние с проверкой "Черного списка" и синхронизацией
+  mergeData: async (cloudJson) => {
+      let cloudPrompts = [];
+      let cloudUsage = 0;
+      let cloudLicense = null;
+      let cloudDeviceId = null;
+
+      if (Array.isArray(cloudJson)) {
+          cloudPrompts = cloudJson;
+      } else if (cloudJson && cloudJson.prompts) {
+          cloudPrompts = cloudJson.prompts;
+          cloudUsage = cloudJson.meta?.usageCount || 0;
+          cloudLicense = cloudJson.meta?.licenseKey || null; // Читаем ключ
+          cloudDeviceId = cloudJson.meta?.deviceId || null; // <--- ЧИТАЕМ ID
+      } else {
+          return 0; // Нечего мержить
+      }
+      
+      let deletedLog = [];
+      try { deletedLog = JSON.parse(localStorage.getItem(DELETED_LOG_KEY) || "[]"); } catch (e) {}
+
+      let updatedCount = 0;
+      for (const p of cloudPrompts) {
+          // Если ID есть в черном списке — ПРОПУСКАЕМ
+          if (p.id && deletedLog.includes(p.id)) continue; 
+          
+          if (p.title) {
+              await storageService.savePrompt(p);
+              updatedCount++;
+          }
+      }
+
+      // Синхронизация счетчика
+      const currentUsage = await storageService.getUsageCount();
+      if (cloudUsage > currentUsage) {
+          await storageService.setUsageCount(cloudUsage);
+      }
+
+      // Если в облаке есть лицензия, берем её
+      const currentLicense = await storageService.getSetting("license_key");
+      if (!currentLicense && cloudLicense) {
+          await storageService.saveSetting("license_key", cloudLicense);
+      }
+      
+      // НОВОЕ: Восстанавливаем ID устройства, если у нас его нет или он новый
+      // Это предотвращает накрутку счетчика при переустановке
+      const currentDeviceRec = await dbHelper.get(STORE_SETTINGS, "device_installation_id");
+      if (!currentDeviceRec && cloudDeviceId) {
+          await dbHelper.put(STORE_SETTINGS, { 
+              key: "device_installation_id", 
+              value: cloudDeviceId, 
+              type: "system" 
+          });
+      }
+
+      return updatedCount;
+  },
+
+  clearAll: async () => {
+    await dbHelper.clear(STORE_PROMPTS);
+    localStorage.removeItem(DELETED_LOG_KEY);
+  },
+
+  clearDeletedLog: () => {
+      localStorage.removeItem(DELETED_LOG_KEY);
+  },
+
+  // --- API KEYS & SETTINGS ---
+
+  getAllApiKeys: async () => {
+    const settings = await dbHelper.getAll(STORE_SETTINGS);
+    const keysMap = {};
+    settings.forEach(s => {
+        if (s.type === 'apikey') {
+            keysMap[s.key] = s.value;
+        }
+    });
+    return keysMap;
+  },
+
+  getApiKey: async (providerId) => {
+    const record = await dbHelper.get(STORE_SETTINGS, providerId);
+    return record ? record.value : "";
+  },
+
+  setApiKey: async (providerId, keyValue) => {
+    await dbHelper.put(STORE_SETTINGS, {
+        key: providerId,
+        value: keyValue,
+        type: 'apikey'
+    });
+  },
+
+  getSetting: async (key) => {
+      const record = await dbHelper.get(STORE_SETTINGS, key);
+      return record ? record.value : null;
+  },
+
+  saveSetting: async (key, value) => {
+      await dbHelper.put(STORE_SETTINGS, { key, value, type: 'config' });
+  },
+
+  // НОВОЕ: Генерация уникального ID устройства
+  getDeviceId: async () => {
+      // 1. Пробуем найти уже сохраненный ID
+      const record = await dbHelper.get(STORE_SETTINGS, "device_installation_id");
+      if (record && record.value) {
+          return record.value;
+      }
+
+      // 2. Если нет - генерируем новый
+      const newId = crypto.randomUUID();
+      
+      // 3. Сохраняем его
+      await dbHelper.put(STORE_SETTINGS, { 
+          key: "device_installation_id", 
+          value: newId, 
+          type: "system" 
+      });
+      
+      return newId;
+  },
+
+  // --- USAGE COUNTER (TRIAL) ---
+  
+  getUsageCount: async () => {
+      const record = await dbHelper.get(STORE_SETTINGS, 'system_usage');
+      return record ? (parseInt(record.value) || 0) : 0;
+  },
+
+  setUsageCount: async (val) => {
+      await dbHelper.put(STORE_SETTINGS, { key: 'system_usage', value: val, type: 'system' });
+  },
+
+  incrementUsageCount: async () => {
+      const current = await storageService.getUsageCount();
+      await storageService.setUsageCount(current + 1);
+      return current + 1;
+  }
+};
+
+--- Файл: src\services\user.js ---
+
+/* src/services/user.js */
+import { storageService } from "./storage";
+
+// Ссылка на твой обновленный скрипт
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxhHbkdM6ActzrZASn9ju7Us3Bs_rwDwOnM_AQvbEl_ZgMIvexHDjLqu79QGfvDeCA/exec"; 
+
+export const userService = {
+  isPro: async () => {
+    const cachedStatus = await storageService.getSetting("license_status"); 
+    if (cachedStatus === 'active') return true;
+    return false;
+  },
+  
+  verifyKeyOnServer: async (key) => {
+      try {
+          // 1. Получаем уникальный ID этого браузера
+          const deviceId = await storageService.getDeviceId();
+
+          // 2. Отправляем Key + DeviceId
+          const url = `${GOOGLE_SCRIPT_URL}?action=verify&licenseKey=${encodeURIComponent(key)}&deviceId=${encodeURIComponent(deviceId)}`;
+          
+          console.log("Verifying...", url);
+
+          const response = await fetch(url, {
+              method: "GET",
+              redirect: "follow",
+              headers: { "Content-Type": "text/plain;charset=utf-8" }
+          });
+          
+          if (!response.ok) throw new Error("Server Error");
+
+          const data = await response.json();
+          console.log("Response:", data);
+
+          if (data.valid) {
+              await storageService.saveSetting("license_status", "active");
+              return true;
+          } else {
+              // Если ошибка (например, Limit reached)
+              await storageService.saveSetting("license_status", "inactive");
+              // Можно вернуть сообщение об ошибке, чтобы показать юзеру
+              console.warn("Server message:", data.message);
+              return false;
+          }
+      } catch (e) {
+          console.error("Verification error:", e);
+          return false;
+      }
+  },
+  
+  // ... getStatusLabel и canRunAI без изменений ...
+  getStatusLabel: async () => {
+    const pro = await userService.isPro();
+    if (pro) return "PRO Plan";
+    const count = await storageService.getUsageCount();
+    const left = Math.max(0, 10 - count);
+    return `Trial (${left} runs left)`;
+  },
+
+  canRunAI: async () => {
+    const pro = await userService.isPro();
+    if (pro) return { allowed: true };
+    const count = await storageService.getUsageCount();
+    if (count < 10) return { allowed: true, trialsLeft: 10 - count };
+    return { allowed: false, reason: "Trial limit reached. Please upgrade." };
+  }
+};
+
+--- Файл: src\services\llm\index.js ---
+
+/* src/services/llm/index.js */
+import { openaiProvider } from "./providers/openai";
+import { anthropicProvider } from "./providers/anthropic";
+import { geminiProvider } from "./providers/gemini";
+import { xaiProvider } from "./providers/xai"; 
+import { deepseekProvider } from "./providers/deepseek"; // Импорт DeepSeek
+
+const providers = {
+  [openaiProvider.id]: openaiProvider,
+  [anthropicProvider.id]: anthropicProvider,
+  [geminiProvider.id]: geminiProvider,
+  [xaiProvider.id]: xaiProvider,
+  [deepseekProvider.id]: deepseekProvider, // Регистрация DeepSeek
+};
+
+export const llmService = {
+  getProviders: () => Object.values(providers),
+  getModels: (providerId) => providers[providerId]?.models || [],
+  
+  run: async (providerId, apiKey, model, systemPrompt, userMessage) => {
+    const provider = providers[providerId];
+    if (!provider) throw new Error(`Provider '${providerId}' not found`);
+    
+    return await provider.generate(apiKey, model, systemPrompt, userMessage);
+  }
+};
+
+--- Файл: src\services\llm\providers\anthropic.js ---
+
+/* src/services/llm/providers/anthropic.js */
+
+export const anthropicProvider = {
+  id: "anthropic",
+  name: "Anthropic (Claude 4.5)",
+  defaultModel: "claude-sonnet-4-5",
+  models: [
+    "claude-sonnet-4-5", // Recommended (Balance)
+    "claude-haiku-4-5",  // Fast & Cheap
+    "claude-opus-4-5"    // Maximum Intelligence
+  ],
+
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    // Формируем тело запроса согласно документации 2026
+    const body = {
+      model: model,
+      max_tokens: 4096, // Обязательный параметр в Anthropic
+      messages: [
+        { role: "user", content: userMessage }
+      ]
+    };
+
+    // SYSTEM PROMPT: Передается отдельным полем верхнего уровня
+    if (systemPrompt && systemPrompt.trim()) {
+      body.system = systemPrompt;
+    }
+
+    // Заголовки для Anthropic API
+    // Примечание: 'anthropic-dangerous-direct-browser-access' может потребоваться 
+    // в некоторых средах, чтобы разрешить запросы с клиента.
+    const headers = {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01", // Стабильная версия API
+      "content-type": "application/json",
+      "anthropic-dangerous-direct-browser-access": "true" // Разрешаем браузеру (если API поддерживает)
+    };
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      // Anthropic возвращает ошибки в объекте error: { type, message }
+      throw new Error(err.error?.message || "Anthropic API Error");
+    }
+
+    const data = await response.json();
+    
+    // Ответ лежит в content[0].text
+    if (data.content && data.content.length > 0 && data.content[0].type === 'text') {
+        return data.content[0].text;
+    }
+    
+    return ""; // Fallback
+  }
+};
+
+--- Файл: src\services\llm\providers\custom.js ---
+
+/* src/services/llm/providers/custom.js */
+
+export const customProvider = {
+  id: "custom_legacy",
+  name: "Legacy / Single Input API",
+  defaultModel: "default",
+  models: ["default"],
+
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    // ЭТОТ API НЕ ПОНИМАЕТ РОЛЕЙ. СКЛЕИВАЕМ СТРОКИ.
+    
+    // Формируем единый текст
+    const finalPrompt = `
+      === INSTRUCTIONS ===
+      ${systemPrompt}
+      
+      === USER DATA ===
+      ${userMessage}
+    `.trim();
+
+    // Отправляем как одно поле 'prompt' (пример для типичного старого API)
+    /* 
+    const response = await fetch("https://my-custom-api.com/v1/completion", {
+       body: JSON.stringify({ prompt: finalPrompt }) 
+    ...
+    */
+   
+    // Для теста просто вернем то, что мы склеили, чтобы ты увидел это в интерфейсе
+    return `[SIMULATION] I received this single merged string:\n\n${finalPrompt}`;
+  }
+};
+
+--- Файл: src\services\llm\providers\deepseek.js ---
+
+/* src/services/llm/providers/deepseek.js */
+
+export const deepseekProvider = {
+  id: "deepseek",
+  name: "DeepSeek (V3.2)",
+  defaultModel: "deepseek-chat",
+  models: [
+    "deepseek-chat",     // V3.2 Standard (Fast, cheap)
+    "deepseek-reasoner"  // V3.2 Thinking Mode (Reasoning)
+  ],
+
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    // DeepSeek полностью совместим с форматом OpenAI
+    const messages = [];
+
+    // Используем стандартную роль "system" (в отличие от новых OpenAI, DeepSeek следует классике)
+    if (systemPrompt && systemPrompt.trim()) {
+      messages.push({ role: "system", content: systemPrompt });
+    }
+
+    if (userMessage && userMessage.trim()) {
+      messages.push({ role: "user", content: userMessage });
+    }
+
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 1.0, // Рекомендуемое значение для DeepSeek
+        stream: false
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || "DeepSeek API Error");
+    }
+
+    const data = await response.json();
+    
+    // Примечание: У модели deepseek-reasoner может быть поле reasoning_content,
+    // но основной ответ всегда лежит в content.
+    return data.choices[0].message.content;
+  }
+};
+
+--- Файл: src\services\llm\providers\gemini.js ---
+
+/* src/services/llm/providers/gemini.js */
+
+export const geminiProvider = {
+  id: "gemini",
+  name: "Google Gemini (3.0 / 2.5)",
+  defaultModel: "gemini-3-flash-preview",
+  models: [
+    "gemini-3-flash-preview", // Быстрая, дешевая, актуальная
+    "gemini-3-pro",           // Самая умная
+    "gemini-2.5-pro",         // Программирование и логика
+    "gemini-2.5-flash"        // Контекст 1М токенов
+  ],
+
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    // URL для REST API Google AI Studio
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    // Формируем тело запроса
+    const body = {
+      contents: [
+        {
+          parts: [{ text: userMessage }]
+        }
+      ],
+      generationConfig: {
+        // ВАЖНО: Для Gemini 3 рекомендуется температура 1.0, иначе модель может "отупеть"
+        temperature: model.includes("gemini-3") ? 1.0 : 0.7
+      }
+    };
+
+    // SYSTEM INSTRUCTION: В Gemini это отдельное поле верхнего уровня (не внутри contents)
+    if (systemPrompt && systemPrompt.trim()) {
+      body.systemInstruction = {
+        parts: [{ text: systemPrompt }]
+      };
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || "Gemini API Error");
+    }
+
+    const data = await response.json();
+
+    // Парсим ответ. Gemini может вернуть несколько candidates, берем первого.
+    // Если ответ заблокирован (Safety), content может быть null.
+    const candidate = data.candidates?.[0];
+    
+    if (candidate?.finishReason === "SAFETY") {
+      throw new Error("Response blocked by Safety Filters.");
+    }
+
+    if (candidate?.content?.parts?.[0]?.text) {
+      return candidate.content.parts[0].text;
+    }
+
+    return ""; // Пустой ответ
+  }
+};
+
+--- Файл: src\services\llm\providers\openai.js ---
+
+/* src/services/llm/providers/openai.js */
+
+export const openaiProvider = {
+  id: "openai",
+  name: "OpenAI (GPT-5 / o3)",
+  defaultModel: "gpt-5.2",
+  models: [
+    "gpt-5.2",
+    "gpt-5-pro",
+    "gpt-4.1",
+    "o3",
+    "o4-mini"
+  ],
+  
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    const messages = [];
+
+    if (systemPrompt && systemPrompt.trim()) {
+      messages.push({ role: "developer", content: systemPrompt });
+    }
+
+    if (userMessage && userMessage.trim()) {
+      messages.push({ role: "user", content: userMessage });
+    }
+
+    if (messages.length === 0) {
+      messages.push({ role: "user", content: " " });
+    }
+
+    try {
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: messages,
+            max_completion_tokens: 2000, 
+            temperature: 0.7,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error("OpenAI API Error Details:", errText); // <--- СМОТРИ СЮДА В КОНСОЛИ
+          try {
+              const errJson = JSON.parse(errText);
+              throw new Error(errJson.error?.message || `API Error: ${response.status}`);
+          } catch (e) {
+              throw new Error(`API Error ${response.status}: ${errText}`);
+          }
+        }
+
+        const data = await response.json();
+        return data.choices[0].message.content;
+
+    } catch (networkError) {
+        console.error("Network/Fetch Error:", networkError); // <--- СМОТРИ СЮДА
+        
+        // Подсказка для пользователя
+        if (networkError.message === "Failed to fetch") {
+            throw new Error("Network Error: Could not connect to OpenAI. Check your VPN or Internet connection.");
+        }
+        throw networkError;
+    }
+  }
+};
+
+--- Файл: src\services\llm\providers\xai.js ---
+
+/* src/services/llm/providers/xai.js */
+
+export const xaiProvider = {
+  id: "xai",
+  name: "xAI (Grok)",
+  defaultModel: "grok-4",
+  models: [
+    "grok-4",                      // Флагман
+    "grok-4-1-fast-reasoning",     // Fast Reasoning (2M context)
+    "grok-4-0709",                 // High-end version
+    "grok-4-1-fast-non-reasoning", // Быстрая, без рассуждений
+    "grok-code-fast-1",            // Для кода
+    "grok-3-mini"                  // Legacy/Light
+  ],
+
+  generate: async (apiKey, model, systemPrompt, userMessage) => {
+    // xAI поддерживает стандартный формат сообщений через REST API
+    const messages = [];
+
+    // System Prompt (аналог chat.append(system(...)))
+    if (systemPrompt && systemPrompt.trim()) {
+      messages.push({ role: "system", content: systemPrompt });
+    }
+
+    // User Message (аналог chat.append(user(...)))
+    if (userMessage && userMessage.trim()) {
+      messages.push({ role: "user", content: userMessage });
+    }
+
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 0.7,
+        stream: false 
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || "xAI API Error");
+    }
+
+    const data = await response.json();
+    
+    // В REST API ответ приходит в стандартном формате choices
+    return data.choices[0].message.content;
+  }
+};
+

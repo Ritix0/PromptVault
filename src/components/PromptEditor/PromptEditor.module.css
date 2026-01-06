@@ -1,0 +1,965 @@
+/* src/components/PromptEditor/PromptEditor.module.css */
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.titleInput {
+  font-size: 1.5rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--foreground);
+  width: 100%;
+  outline: none;
+  padding: 0.25rem 0;
+  transition: border-color 0.2s;
+}
+
+.titleInput:focus {
+  border-bottom: 1px solid var(--primary);
+}
+
+.titleInput::placeholder {
+  color: var(--foreground);
+  opacity: 0.3;
+  font-style: italic;
+}
+
+/* --- Вкладки --- */
+.tabs {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.tab {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--foreground);
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  opacity: 1;
+}
+
+.activeTab {
+  opacity: 1;
+  color: var(--primary);
+  border-bottom: 2px solid var(--primary);
+}
+
+/* --- Новые стили для лейблов ролей (SYSTEM / USER) --- */
+.roleLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.roleBadge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.roleSystem {
+  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.roleUser {
+  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.roleDesc {
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+/* --- Текстовые поля --- */
+.contentArea {
+  flex: 1;
+  width: 100%;
+  min-height: 400px;
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 1rem;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--background);
+  color: var(--foreground);
+  resize: vertical;
+  outline: none;
+}
+
+.contentArea:focus {
+  border-color: var(--primary);
+}
+
+.testInputArea {
+  width: 100%;
+  min-height: 80px;
+  padding: 0.8rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  resize: vertical;
+  margin-bottom: 0.5rem;
+}
+
+.testInputArea:focus {
+  outline: 2px solid #22c55e; /* Зеленый фокус для User Input */
+  border-color: transparent;
+}
+
+/* --- Footer Actions --- */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 1rem;
+}
+
+.actionsRight {
+  display: flex;
+  gap: 1rem;
+}
+
+.btnPrimary {
+  background-color: var(--primary);
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.btnPrimary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btnSecondary {
+  background-color: transparent;
+  color: var(--foreground);
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btnSecondary:hover {
+  background-color: var(--background);
+  border-color: var(--foreground);
+}
+
+.btnDelete {
+  background-color: transparent;
+  color: #ef4444;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  font-weight: 500;
+  opacity: 0.8;
+  transition: all 0.2s;
+}
+
+.btnDelete:hover {
+  background-color: #fef2f2;
+  opacity: 1;
+}
+
+.btnDeleteConfirm {
+  background-color: #ef4444;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  font-weight: 700;
+  animation: pulse 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* --- Run Tab Specifics --- */
+.runContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.runControls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background-color: var(--background);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.runTopBar {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.runResult {
+  flex: 1;
+  min-height: 300px;
+  padding: 1.5rem;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  line-height: 1.6;
+  overflow-y: auto;
+}
+
+/* Markdown Styles inside Result */
+.runResult h1, .runResult h2, .runResult h3 { margin-top: 1rem; margin-bottom: 0.5rem; color: #fff; }
+.runResult p { margin-bottom: 1rem; }
+.runResult code { background-color: #2d2d2d; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+.runResult pre { background-color: #2d2d2d; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; }
+.runResult pre code { background-color: transparent; padding: 0; }
+.runResult ul, .runResult ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+.runResult li { margin-bottom: 0.5rem; }
+
+.error { color: #ef4444; font-weight: bold; }
+
+/* --- History Tab Styles --- */
+.historyContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+  max-height: 600px;
+}
+
+.historyItem {
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color 0.2s;
+}
+
+.historyItem:hover {
+  border-color: var(--primary);
+}
+
+.historyHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.historyVersion {
+  font-weight: 700;
+  font-size: 0.9rem;
+  background-color: var(--border);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  color: var(--foreground);
+}
+
+.historyDate {
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.historyPreview {
+  font-family: monospace;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  background-color: rgba(0,0,0,0.03);
+  padding: 0.5rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3; /* Показываем только 3 строки */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.btnRestore {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.btnRestore:hover {
+  background-color: var(--primary);
+  color: white;
+}
+
+.emptyHistory {
+  text-align: center;
+  opacity: 0.5;
+  margin-top: 2rem;
+  font-style: italic;
+}
+
+/* --- ARENA MODE STYLES --- */
+
+/* Переключатель режимов внутри Run */
+.modeToggle {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.2rem;
+  border-radius: 6px;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  width: fit-content;
+}
+
+.modeBtn {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: all 0.2s;
+}
+
+.modeBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* Сетка Арены */
+.arenaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  height: 100%;
+  min-height: 400px;
+}
+
+.arenaCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background-color: rgba(0,0,0,0.02);
+}
+
+.arenaColHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.colLabel {
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.arenaResult {
+  flex: 1;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  font-size: 0.9rem;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+}
+
+/* Адаптив: на мобилках арена превращается в колонку */
+@media (max-width: 768px) {
+  .arenaGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- MANUAL MODE STYLES --- */
+.manualContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem;
+  background-color: var(--background);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.manualStep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stepLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+  opacity: 0.6;
+}
+
+.copyRow {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btnCopy {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 600;
+  transition: all 0.2s;
+  color: var(--foreground);
+}
+
+.btnCopy:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(37, 99, 235, 0.05);
+}
+
+.externalLinks {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+.linkBtn {
+  font-size: 0.9rem;
+  text-decoration: underline;
+  color: var(--primary);
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.linkBtn:hover {
+  opacity: 1;
+}
+
+.manualResultArea {
+  width: 100%;
+  min-height: 150px;
+  padding: 0.8rem;
+  background-color: var(--background); /* Чуть темнее чем карточка */
+  color: var(--foreground);            /* <--- ВОТ ЭТО ИСПРАВИТ ЧЕРНЫЙ ТЕКСТ */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: monospace;
+  resize: vertical;
+}
+
+.manualResultArea:focus {
+  outline: 2px solid var(--primary);
+  border-color: transparent;
+}
+
+/* --- Execution Mode Switcher (Manual vs Auto) --- */
+.executionSwitchContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.executionSwitch {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.25rem;
+  border-radius: 8px;
+  gap: 0.25rem;
+}
+
+.execBtn {
+  padding: 0.4rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  opacity: 0.6;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.execBtn:hover {
+  opacity: 1;
+}
+
+.execBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* --- COMPARE TAB --- */
+.compareContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.compareControls {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compareSelector {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compareSelect {
+  width: 100%;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-color: var(--card-bg);
+  color: var(--foreground);
+}
+
+.diffGrid {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  overflow: hidden; /* Чтобы скроллились колонки внутри */
+}
+
+.diffCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.diffBox {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--background);
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.diffLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.5;
+  margin-bottom: 0.3rem;
+}
+
+/* Цвета для diff */
+.diffAdded {
+  background-color: rgba(34, 197, 94, 0.2); /* Зеленый фон */
+  color: #15803d;
+  text-decoration: none;
+}
+
+.diffRemoved {
+  background-color: rgba(239, 68, 68, 0.2); /* Красный фон */
+  color: #b91c1c;
+  text-decoration: line-through;
+}
+
+/* Dark mode overrides for diff colors */
+@media (prefers-color-scheme: dark) {
+  .diffAdded {
+    background-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+  .diffRemoved {
+    background-color: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+}
+
+/* --- НОВЫЕ СТИЛИ ДЛЯ ИНТЕРФЕЙСА --- */
+
+/* 1. Бейджи Ролей (SYSTEM / USER) */
+.roleLabelRow {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.roleBadge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.roleSystem {
+  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.roleUser {
+  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
+  color: #22c55e;
+  border: 1px solid #22c55e;
+}
+
+.roleDesc {
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+/* 2. Переключатель Режимов (Manual / Auto) */
+.executionSwitchContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.executionSwitch {
+  display: flex;
+  background-color: var(--border);
+  padding: 0.25rem;
+  border-radius: 8px;
+  gap: 0.25rem;
+}
+
+.execBtn {
+  padding: 0.4rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  opacity: 0.6;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.execBtn:hover {
+  opacity: 1;
+}
+
+.execBtnActive {
+  background-color: var(--card-bg);
+  color: var(--primary);
+  opacity: 1;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* 3. Manual Mode (Librarian) */
+.manualContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  background-color: var(--background);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.manualStep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stepLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--foreground);
+  opacity: 0.6;
+  letter-spacing: 0.5px;
+}
+
+.copyRow {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btnCopy {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 600;
+  transition: all 0.2s;
+  color: var(--foreground);
+}
+
+.btnCopy:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(37, 99, 235, 0.05);
+}
+
+.externalLinks {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  padding: 0.5rem;
+}
+
+.linkBtn {
+  font-size: 0.9rem;
+  text-decoration: underline;
+  color: var(--primary);
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.linkBtn:hover {
+  opacity: 1;
+}
+
+.manualResultArea {
+  width: 100%;
+  min-height: 120px;
+  padding: 0.8rem;
+  background-color: var(--card-bg);
+  color: var(--foreground); /* Исправление черного текста */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: monospace;
+  resize: vertical;
+  outline: none;
+}
+
+.manualResultArea:focus {
+  border-color: var(--primary);
+}
+
+/* 4. Compare Tab (Diff) */
+.compareContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+}
+
+.compareControls {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compareSelector {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.compareSelect {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.diffGrid {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  overflow: hidden;
+}
+
+.diffCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.diffBox {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--background);
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+.diffLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  opacity: 0.5;
+  margin-bottom: 0.3rem;
+}
+
+/* Цвета для diff */
+.diffAdded {
+  background-color: #dcfce7; /* Light Green */
+  color: #166534;
+  text-decoration: none;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.diffRemoved {
+  background-color: #fee2e2; /* Light Red */
+  color: #991b1b;
+  text-decoration: line-through;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Dark mode overrides for diff colors */
+@media (prefers-color-scheme: dark) {
+  .diffAdded {
+    background-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+  .diffRemoved {
+    background-color: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+}
+
+/* Arena Grid Styles (Если их не было) */
+.arenaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  height: 100%;
+  min-height: 400px;
+}
+
+.arenaCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem;
+  background-color: rgba(0,0,0,0.02);
+}
+
+.arenaColHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.colLabel {
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.arenaResult {
+  flex: 1;
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  font-size: 0.9rem;
+  overflow-y: auto;
+  font-family: monospace;
+}
+
+@media (max-width: 768px) {
+  .arenaGrid {
+    grid-template-columns: 1fr;
+  }
+  .diffGrid {
+    flex-direction: column;
+  }
+}
