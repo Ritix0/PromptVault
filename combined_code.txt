@@ -63,7 +63,7 @@ import "./globals.css";
 import CookieBanner from "@/components/CookieBanner/CookieBanner"; // Импортируем компонент
 
 export const metadata = {
-  title: "PromptVault (Local-First)",
+  title: "PromptVault",
   description: "Secure, local-first prompt management",
 };
 
