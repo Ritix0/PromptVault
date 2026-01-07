@@ -7,7 +7,7 @@ export const metadata = {
   description: "Secure, local-first prompt management",
   // ДОБАВЛЯЕМ БЛОК verification СЮДА:
   verification: {
-    google: "rEm88MlgB-J142CJqVlNSrwEu5fnP6D8lRY86PJQEew",
+    google: "7la86cOiEIRDy-89MryYWun2PXjV209prrhDMgVbHGY",
   },
 };
 
