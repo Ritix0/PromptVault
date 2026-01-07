@@ -2,11 +2,13 @@
 
 // КОНФИГУРАЦИЯ
 const CLIENT_ID = "833291081802-47b7ntjqck33dhuldk71gpkqkp82edoj.apps.googleusercontent.com"; 
-const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets";
+
+// ИЗМЕНЕНИЕ: Оставили только безопасный доступ к файлам (Drive)
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 // Имена файлов в облаке
 const DB_FILENAME = "promptvault_backup.json";
-const SHEET_NAME = "PromptVault_History";
+// SHEET_NAME удален
 
 let tokenClient;
 let gapiInited = false;
@@ -14,36 +16,7 @@ let gisInited = false;
 let accessToken = null;
 let scriptsLoadingPromise = null;
 
-// Хелпер для получения ID таблицы
-let cachedSpreadsheetId = null;
-
-const getSpreadsheetId = async () => {
-    if (cachedSpreadsheetId) return cachedSpreadsheetId;
-
-    const search = await window.gapi.client.drive.files.list({
-        q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
-        fields: 'files(id)',
-    });
-    
-    if (search.result.files && search.result.files.length > 0) {
-        cachedSpreadsheetId = search.result.files[0].id;
-        return cachedSpreadsheetId;
-    }
-    
-    const createRes = await window.gapi.client.sheets.spreadsheets.create({
-        properties: { title: SHEET_NAME }
-    });
-    cachedSpreadsheetId = createRes.result.spreadsheetId;
-    
-    await window.gapi.client.sheets.spreadsheets.values.append({
-        spreadsheetId: cachedSpreadsheetId,
-        range: 'A1',
-        valueInputOption: 'USER_ENTERED',
-        resource: { values: [["Date", "Version", "Title", "System Prompt", "User Input", "Result", "Model", "ID_REF"]] }
-    });
-
-    return cachedSpreadsheetId;
-};
+// Хелпер getSpreadsheetId удален, так как таблицы отключены
 
 // Внутренняя функция восстановления токена
 const ensureToken = () => {
@@ -121,8 +94,8 @@ export const googleService = {
           await window.gapi.client.init({
             // clientId не обязателен тут для bearer auth, но полезен для контекста
             discoveryDocs: [
-              "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
-              "https://sheets.googleapis.com/$discovery/rest?version=v4"
+              "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"
+              // Sheets API удален отсюда
             ],
           });
           gapiInited = true;
@@ -259,29 +232,10 @@ export const googleService = {
     }
   },
 
-  // --- SHEETS LOGGING ---
+  // --- SHEETS LOGGING (ОТКЛЮЧЕНО) ---
   appendToSheet: async (prompt) => {
-    if (!ensureToken()) return;
-    await ensureInit();
-    try {
-        const spreadsheetId = await getSpreadsheetId();
-        const row = [
-            new Date().toLocaleString(),
-            prompt.version || "1",
-            prompt.title,
-            prompt.content,
-            prompt.testInput || "",
-            prompt.lastResult || "",
-            "gpt/claude",
-            prompt.id // ID_REF в конце
-        ];
-        await window.gapi.client.sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: 'A1',
-            valueInputOption: 'USER_ENTERED',
-            resource: { values: [row] }
-        });
-    } catch (e) { handleApiError(e, 'appendToSheet'); }
+     // Заглушка: просто выходим, ничего не делаем
+     return;
   },
 
   // --- SMART SYNC (ALL) ---
@@ -289,65 +243,11 @@ export const googleService = {
     if (!ensureToken()) throw new Error("Not authenticated");
     await ensureInit();
 
-    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount),
-    // а не просто массив промптов.
+    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount)
     await googleService.uploadBackup(rawJsonData);
-    console.log("Backup synced (with meta).");
+    console.log("Backup synced (File Only).");
 
-    // 2. Умная синхронизация таблицы (остается как было, работает с массивом)
-    try {
-        const spreadsheetId = await getSpreadsheetId();
-        
-        const result = await window.gapi.client.sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: 'A:H', 
-        });
-
-        const rows = result.result.values || [];
-        
-        const existingSignatures = new Set();
-        rows.forEach((row, index) => {
-            if (index === 0) return;
-            const ver = row[1];
-            const id = row[7];
-            if (id && ver) {
-                existingSignatures.add(`${id}_v${ver}`);
-            }
-        });
-
-        const newRows = [];
-        
-        allPrompts.forEach(p => {
-             const currentSig = `${p.id}_v${p.version || 1}`;
-             if (!existingSignatures.has(currentSig)) {
-                 newRows.push([
-                    new Date(p.updatedAt).toLocaleString(),
-                    p.version || "1",
-                    p.title,
-                    p.content,
-                    p.testInput || "",
-                    p.lastResult || "",
-                    "batch_sync",
-                    p.id
-                 ]);
-             }
-        });
-
-        if (newRows.length > 0) {
-            await window.gapi.client.sheets.spreadsheets.values.append({
-                spreadsheetId,
-                range: 'A1',
-                valueInputOption: 'USER_ENTERED',
-                resource: { values: newRows }
-            });
-            return newRows.length;
-        } else {
-            return 0;
-        }
-
-    } catch (e) {
-        handleApiError(e, 'syncEverything:Sheets');
-        return 0;
-    }
+    // 2. Логику таблиц удалили, чтобы не вызывать ошибку прав доступа
+    return 0;
   }
 };

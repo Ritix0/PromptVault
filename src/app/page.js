@@ -79,10 +79,10 @@ export default function Home() {
     await loadPrompts();
     setView("list");
 
-    // Фоновая синхронизация при сохранении (упрощенная)
+    // Фоновая синхронизация при сохранении (ТОЛЬКО БЭКАП)
     if (localStorage.getItem("pv_google_token")) {
-        console.log("🔄 Background Syncing...");
-        googleService.appendToSheet(savedPrompt).catch(err => console.warn("Sheet sync failed:", err));
+        console.log("🔄 Background Backup...");
+        // Убрали вызов googleService.appendToSheet
         
         // Отправляем полный JSON с метаданными
         storageService.getRawData().then(json => {
