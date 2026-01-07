@@ -42,6 +42,17 @@
   gap: 1rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1rem;
+  /* Для мобильных: чтобы вкладки можно было скроллить, если не влезают */
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+  padding-bottom: 2px; /* Место под скроллбар (если виден) */
+}
+
+/* Скрываем скроллбар для эстетики */
+.tabs::-webkit-scrollbar {
+  height: 0px;
+  background: transparent;
 }
 
 .tab {
@@ -52,6 +63,7 @@
   opacity: 0.6;
   border-bottom: 2px solid transparent;
   transition: all 0.2s;
+  flex-shrink: 0; /* Не сжимать вкладки */
 }
 
 .tab:hover {
@@ -70,6 +82,7 @@
   align-items: center;
   gap: 0.8rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap; /* Разрешаем перенос на маленьких экранах */
 }
 
 .roleBadge {
@@ -144,12 +157,18 @@
   justify-content: space-between;
   align-items: center;
   padding-top: 1rem;
+  gap: 1rem; /* Отступ между группами кнопок */
 }
 
 .actionsRight {
   display: flex;
   gap: 1rem;
 }
+.actionsLeft {
+  display: flex;
+  gap: 1rem;
+}
+
 
 .btnPrimary {
   background-color: var(--primary);
@@ -158,6 +177,7 @@
   border-radius: 6px;
   font-weight: 500;
   transition: background-color 0.2s;
+  border: none;
 }
 
 .btnPrimary:hover {
@@ -417,13 +437,6 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
 }
 
-/* Адаптив: на мобилках арена превращается в колонку */
-@media (max-width: 768px) {
-  .arenaGrid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* --- MANUAL MODE STYLES --- */
 .manualContainer {
   display: flex;
@@ -480,6 +493,7 @@
   gap: 1rem;
   justify-content: center;
   margin-top: 0.5rem;
+  flex-wrap: wrap; /* Разрешаем перенос ссылок */
 }
 
 .linkBtn {
@@ -488,6 +502,7 @@
   color: var(--primary);
   opacity: 0.8;
   cursor: pointer;
+  padding: 0.2rem; /* Увеличим зону клика */
 }
 
 .linkBtn:hover {
@@ -498,8 +513,8 @@
   width: 100%;
   min-height: 150px;
   padding: 0.8rem;
-  background-color: var(--background); /* Чуть темнее чем карточка */
-  color: var(--foreground);            /* <--- ВОТ ЭТО ИСПРАВИТ ЧЕРНЫЙ ТЕКСТ */
+  background-color: var(--background);
+  color: var(--foreground);
   border: 1px solid var(--border);
   border-radius: 6px;
   font-family: monospace;
@@ -526,6 +541,8 @@
   padding: 0.25rem;
   border-radius: 8px;
   gap: 0.25rem;
+  flex-wrap: wrap; /* Разрешаем перенос кнопок */
+  justify-content: center;
 }
 
 .execBtn {
@@ -589,265 +606,6 @@
   display: flex;
   gap: 1rem;
   flex: 1;
-  overflow: hidden; /* Чтобы скроллились колонки внутри */
-}
-
-.diffCol {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  overflow-y: auto;
-  padding-right: 0.5rem;
-}
-
-.diffBox {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background-color: var(--background);
-  padding: 1rem;
-  font-family: monospace;
-  font-size: 0.9rem;
-  white-space: pre-wrap;
-  line-height: 1.6;
-}
-
-.diffLabel {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  font-weight: 700;
-  opacity: 0.5;
-  margin-bottom: 0.3rem;
-}
-
-/* Цвета для diff */
-.diffAdded {
-  background-color: rgba(34, 197, 94, 0.2); /* Зеленый фон */
-  color: #15803d;
-  text-decoration: none;
-}
-
-.diffRemoved {
-  background-color: rgba(239, 68, 68, 0.2); /* Красный фон */
-  color: #b91c1c;
-  text-decoration: line-through;
-}
-
-/* Dark mode overrides for diff colors */
-@media (prefers-color-scheme: dark) {
-  .diffAdded {
-    background-color: rgba(34, 197, 94, 0.25);
-    color: #86efac;
-  }
-  .diffRemoved {
-    background-color: rgba(239, 68, 68, 0.25);
-    color: #fca5a5;
-  }
-}
-
-/* --- НОВЫЕ СТИЛИ ДЛЯ ИНТЕРФЕЙСА --- */
-
-/* 1. Бейджи Ролей (SYSTEM / USER) */
-.roleLabelRow {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  margin-bottom: 0.5rem;
-}
-
-.roleBadge {
-  font-size: 0.7rem;
-  font-weight: 800;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.roleSystem {
-  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
-  color: var(--primary);
-  border: 1px solid var(--primary);
-}
-
-.roleUser {
-  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
-  color: #22c55e;
-  border: 1px solid #22c55e;
-}
-
-.roleDesc {
-  font-size: 0.8rem;
-  opacity: 0.5;
-}
-
-/* 2. Переключатель Режимов (Manual / Auto) */
-.executionSwitchContainer {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px dashed var(--border);
-}
-
-.executionSwitch {
-  display: flex;
-  background-color: var(--border);
-  padding: 0.25rem;
-  border-radius: 8px;
-  gap: 0.25rem;
-}
-
-.execBtn {
-  padding: 0.4rem 1.2rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--foreground);
-  opacity: 0.6;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.execBtn:hover {
-  opacity: 1;
-}
-
-.execBtnActive {
-  background-color: var(--card-bg);
-  color: var(--primary);
-  opacity: 1;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-/* 3. Manual Mode (Librarian) */
-.manualContainer {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  padding: 1.5rem;
-  background-color: var(--background);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-}
-
-.manualStep {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.stepLabel {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--foreground);
-  opacity: 0.6;
-  letter-spacing: 0.5px;
-}
-
-.copyRow {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.btnCopy {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.8rem;
-  background-color: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-weight: 600;
-  transition: all 0.2s;
-  color: var(--foreground);
-}
-
-.btnCopy:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  background-color: rgba(37, 99, 235, 0.05);
-}
-
-.externalLinks {
-  display: flex;
-  gap: 1.5rem;
-  justify-content: center;
-  padding: 0.5rem;
-}
-
-.linkBtn {
-  font-size: 0.9rem;
-  text-decoration: underline;
-  color: var(--primary);
-  opacity: 0.8;
-  cursor: pointer;
-}
-
-.linkBtn:hover {
-  opacity: 1;
-}
-
-.manualResultArea {
-  width: 100%;
-  min-height: 120px;
-  padding: 0.8rem;
-  background-color: var(--card-bg);
-  color: var(--foreground); /* Исправление черного текста */
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: monospace;
-  resize: vertical;
-  outline: none;
-}
-
-.manualResultArea:focus {
-  border-color: var(--primary);
-}
-
-/* 4. Compare Tab (Diff) */
-.compareContainer {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  height: 100%;
-}
-
-.compareControls {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.compareSelector {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.compareSelect {
-  width: 100%;
-  padding: 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background-color: var(--card-bg);
-  color: var(--foreground);
-  font-size: 0.9rem;
-}
-
-.diffGrid {
-  display: flex;
-  gap: 1rem;
-  flex: 1;
   overflow: hidden;
 }
 
@@ -869,7 +627,6 @@
   font-size: 0.9rem;
   white-space: pre-wrap;
   line-height: 1.6;
-  color: var(--foreground);
 }
 
 .diffLabel {
@@ -882,19 +639,15 @@
 
 /* Цвета для diff */
 .diffAdded {
-  background-color: #dcfce7; /* Light Green */
-  color: #166534;
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #15803d;
   text-decoration: none;
-  border-radius: 2px;
-  padding: 0 2px;
 }
 
 .diffRemoved {
-  background-color: #fee2e2; /* Light Red */
-  color: #991b1b;
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #b91c1c;
   text-decoration: line-through;
-  border-radius: 2px;
-  padding: 0 2px;
 }
 
 /* Dark mode overrides for diff colors */
@@ -909,57 +662,78 @@
   }
 }
 
-/* Arena Grid Styles (Если их не было) */
-.arenaGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  height: 100%;
-  min-height: 400px;
-}
-
-.arenaCol {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.5rem;
-  background-color: rgba(0,0,0,0.02);
-}
-
-.arenaColHeader {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.colLabel {
-  font-weight: 700;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  opacity: 0.5;
-  text-align: center;
-}
-
-.arenaResult {
-  flex: 1;
-  background-color: #1e1e1e;
-  color: #e0e0e0;
-  border-radius: 6px;
-  padding: 1rem;
-  font-size: 0.9rem;
-  overflow-y: auto;
-  font-family: monospace;
-}
+/* ==========================================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================================== */
 
 @media (max-width: 768px) {
-  .arenaGrid {
-    grid-template-columns: 1fr;
+  /* 1. Header: Перестраиваем в колонку, заголовок поменьше */
+  .header {
+    gap: 0.8rem;
   }
-  .diffGrid {
+  .header > div { /* Row with title and input */
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .titleInput {
+    font-size: 1.2rem;
+  }
+
+  /* 2. Textareas: Уменьшаем минимальную высоту, чтобы влезало в экран */
+  .contentArea {
+    min-height: 250px;
+    padding: 0.8rem;
+    font-size: 0.95rem; /* Чуть меньше шрифт */
+  }
+
+  /* 3. Footer Buttons: Перестраиваем в колонку для удобства тапа */
+  .footer {
+    flex-direction: column-reverse; /* Сохранить и Отмена наверху (или наоборот, по вкусу) */
+    align-items: stretch; /* Кнопки на всю ширину */
+    gap: 1rem;
+  }
+  
+  .actionsRight {
+    flex-direction: column; /* Save и Cancel друг под другом */
+    width: 100%;
+  }
+
+  .actionsLeft {
+    width: 100%;
+  }
+  
+  .btnPrimary, .btnSecondary, .btnDelete, .btnDeleteConfirm {
+    width: 100%; /* Полная ширина кнопок */
+    padding: 0.8rem; /* Увеличиваем зону клика */
+  }
+
+  /* 4. Compare Controls: Селекторы друг под друга */
+  .compareControls {
     flex-direction: column;
+    gap: 1rem;
+  }
+  
+  /* 5. Grids: Выключаем грид в Арене и Diff, делаем колонки */
+  .arenaGrid {
+    grid-template-columns: 1fr; /* Одна колонка */
+    gap: 1.5rem;
+  }
+  
+  .diffGrid {
+    flex-direction: column; /* Одна колонка */
+  }
+
+  /* 6. Run Mode Controls: Улучшаем селекты моделей */
+  .runTopBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .runTopBar select {
+    width: 100%;
+  }
+  
+  /* 7. Manual Mode Copy Buttons */
+  .copyRow {
+    flex-direction: column; /* Кнопки копирования друг под друга */
   }
 }

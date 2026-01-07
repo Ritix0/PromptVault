@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import styles from "./page.module.css";
 import { storageService } from "@/services/storage";
 import { googleService } from "@/services/google"; 
-import { userService } from "@/services/user"; // НОВОЕ: Импортируем для проверки статуса
+import { userService } from "@/services/user"; 
 import PromptEditor from "@/components/PromptEditor/PromptEditor";
 import Settings from "@/components/Settings/Settings";
 
@@ -20,6 +20,9 @@ export default function Home() {
   
   // Состояние для визуализации процесса синхронизации
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // НОВОЕ: Состояние для мобильного меню
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Загрузка данных
   useEffect(() => {
@@ -38,6 +41,9 @@ export default function Home() {
         setIsLoading(false);
     }
   };
+
+  // --- ХЕЛПЕРЫ ---
+  const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
   // --- ЛОГИКА ФИЛЬТРАЦИИ ---
   const allTags = [...new Set(prompts
@@ -115,18 +121,20 @@ export default function Home() {
     setSelectedTags(prev => 
         prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
     );
+    // Примечание: Мы НЕ закрываем меню при выборе тега, чтобы можно было выбрать несколько
   };
 
   const handleDataChanged = () => {
     loadPrompts();
   };
 
-  // --- ИСПРАВЛЕННАЯ ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
+  // --- ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
   const handleQuickSync = async () => {
       // 0. Проверка авторизации
       if (!localStorage.getItem("pv_google_token")) {
           alert("⚠️ Not connected to Google.\nPlease go to Settings and sign in first.");
           setView("settings");
+          closeMobileMenu(); // Закрываем меню, если переходим в настройки
           return;
       }
 
@@ -144,10 +152,7 @@ export default function Home() {
           }
 
           // --- ЭТАП Б: RELOAD & SAFETY CHECK ---
-          // Получаем актуальное состояние локальной базы после слияния
           const allPrompts = await storageService.getAllPrompts();
-          
-          // Проверяем: если в облаке были данные, а у нас 0 - значит что-то пошло не так.
           const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
           
           if (allPrompts.length === 0 && cloudHasPrompts) {
@@ -158,22 +163,13 @@ export default function Home() {
 
           // --- ЭТАП В: PUSH (Отправка) ---
           console.log("⬆️ Pushing to Cloud...");
-          
-          // 1. Получаем JSON с метаданными (включая лицензию и Device ID)
           const rawData = await storageService.getRawData();
-          
-          // 2. Отправляем и JSON, и массив для таблицы
           await googleService.syncEverything(rawData, allPrompts);
-          
-          // 3. Очищаем лог удаленных
           storageService.clearDeletedLog();
 
           // --- ЭТАП Г: AUTO-VERIFY & FINALIZE ---
-          // Если синхронизация подтянула ключ, проверяем его статус тихо
           const key = await storageService.getSetting("license_key");
           if (key) {
-               // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
-               // Не блокируем UI, просто обновляем статус в фоне
                userService.verifyKeyOnServer(key).then(isValid => {
                    if(isValid) console.log("License verified after sync");
                });
@@ -186,27 +182,45 @@ export default function Home() {
           console.error("Quick sync failed:", e);
           alert(`❌ Sync Error: ${e.message || "Unknown error"}.\nCheck console for details.`);
       } finally {
-          setIsSyncing(false); // Выключаем индикатор в любом случае
+          setIsSyncing(false);
+          closeMobileMenu(); // Закрываем меню после завершения
       }
   };
 
   return (
     <div className={styles.container}>
+      {/* Затемнение фона (Backdrop) для мобильного меню */}
+      <div 
+        className={`${styles.mobileBackdrop} ${isMobileMenuOpen ? styles.backdropVisible : ''}`}
+        onClick={closeMobileMenu}
+      />
+
       <header className={styles.header}>
-        <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
-            PromptVault
+        {/* Группировка для мобильного меню и лого */}
+        <div className={styles.headerLeft}>
+            <button 
+                className={styles.mobileMenuBtn}
+                onClick={() => setIsMobileMenuOpen(true)}
+                aria-label="Open Menu"
+            >
+                ☰
+            </button>
+            <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
+                PromptVault
+            </div>
         </div>
+
         <nav className={styles.nav}>
           <button 
             className={styles.navLink} 
-            onClick={() => setView("list")}
+            onClick={() => { setView("list"); closeMobileMenu(); }}
             style={{ fontWeight: view === 'list' ? 'bold' : 'normal' }}
           >
             Dashboard
           </button>
           <button 
             className={styles.navLink} 
-            onClick={() => setView("settings")}
+            onClick={() => { setView("settings"); closeMobileMenu(); }}
             style={{ fontWeight: view === 'settings' ? 'bold' : 'normal' }}
           >
             Settings
@@ -215,26 +229,40 @@ export default function Home() {
       </header>
 
       <main className={styles.main}>
-        <aside className={styles.sidebar}>
-          <div className={styles.sidebarTitle}>Explorer</div>
+        {/* Добавляем класс sidebarOpen при открытии меню */}
+        <aside className={`${styles.sidebar} ${isMobileMenuOpen ? styles.sidebarOpen : ''}`}>
+          
+          {/* Заголовок сайдбара с кнопкой закрытия для мобильных */}
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+              <div className={styles.sidebarTitle} style={{marginBottom: 0}}>Explorer</div>
+              {/* Кнопка закрытия видна только на мобильных благодаря CSS (можно доработать, но пока используем общий класс) */}
+              <button 
+                className={styles.mobileMenuBtn} 
+                onClick={closeMobileMenu}
+                style={{border: 'none', padding: 0, fontSize: '1.5rem'}}
+              >
+                ✕
+              </button>
+          </div>
+
           <ul className={styles.menuList}>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("all"); setView("list"); }}
+              onClick={() => { setFolder("all"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'all' && view === 'list' ? 'bold' : 'normal', background: folder === 'all' && view === 'list' ? 'var(--border)' : 'transparent' }}
             >
               📂 All Prompts
             </li>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("favorites"); setView("list"); }}
+              onClick={() => { setFolder("favorites"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'favorites' ? 'bold' : 'normal', background: folder === 'favorites' ? 'var(--border)' : 'transparent' }}
             >
               ⭐ Favorites
             </li>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("trash"); setView("list"); }}
+              onClick={() => { setFolder("trash"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'trash' ? 'bold' : 'normal', background: folder === 'trash' ? 'var(--border)' : 'transparent', color: folder === 'trash' ? '#ef4444' : 'inherit' }}
             >
               🗑️ Trash
@@ -259,7 +287,7 @@ export default function Home() {
           
           <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Quick Actions</div>
           <ul className={styles.menuList}>
-            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); }}>
+            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); closeMobileMenu(); }}>
               ➕ New Prompt
             </li>
             {/* КНОПКА СИНХРОНИЗАЦИИ */}

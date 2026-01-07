@@ -6,22 +6,44 @@
   display: flex;
   flex-direction: column;
   padding: 0 1rem;
+  position: relative; /* Важно для позиционирования шторки */
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1.5rem 0;
+  padding: 1rem 0; /* Чуть меньше отступы */
   border-bottom: 1px solid var(--border);
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+/* Группа для лого и бургера */
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .logo {
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   font-weight: 700;
   color: var(--primary);
   letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+
+/* Кнопка меню (бургер) - по умолчанию скрыта */
+.mobileMenuBtn {
+  display: none; 
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--foreground);
 }
 
 .nav {
@@ -35,11 +57,7 @@
   color: var(--foreground);
   opacity: 0.8;
   transition: opacity 0.2s;
-  background: transparent; /* Страховка */
-}
-
-.navLink:hover {
-  opacity: 1;
+  background: transparent;
 }
 
 .main {
@@ -48,15 +66,22 @@
   grid-template-columns: 250px 1fr;
   gap: 2rem;
   padding-bottom: 2rem;
+  position: relative;
 }
 
-/* Sidebar styles */
+/* Sidebar styles - Desktop Default */
 .sidebar {
   background-color: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1rem;
   height: fit-content;
+  transition: transform 0.3s ease;
+}
+
+/* Затемнение фона при открытом меню */
+.mobileBackdrop {
+  display: none;
 }
 
 .sidebarTitle {
@@ -68,10 +93,7 @@
   font-weight: 700;
 }
 
-.menuList {
-  list-style: none;
-}
-
+.menuList { list-style: none; }
 .menuItem {
   margin-bottom: 0.5rem;
   padding: 0.5rem;
@@ -79,16 +101,14 @@
   cursor: pointer;
   transition: background-color 0.2s;
 }
-
-.menuItem:hover {
-  background-color: var(--background);
-}
+.menuItem:hover { background-color: var(--background); }
 
 /* Workspace styles */
 .workspace {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0; /* Важно для grid/flex внутри, чтобы текст не распирал контейнер */
 }
 
 .card {
@@ -104,6 +124,8 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-wrap: wrap; /* Позволяет заголовку и кнопке переноситесь */
+  gap: 0.5rem;
 }
 
 .cardTitle {
@@ -111,17 +133,14 @@
   font-weight: 600;
 }
 
-/* Новый класс для кнопки Create вместо inline-стилей */
 .createBtn {
   color: var(--primary);
   font-weight: 600;
   font-size: 0.95rem;
   background: transparent;
-  transition: opacity 0.2s;
-}
-
-.createBtn:hover {
-  opacity: 0.8;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--primary); /* Добавил рамку для мобилок */
+  border-radius: 6px;
 }
 
 .placeholderText {
@@ -133,43 +152,23 @@
   border-top: 1px solid var(--border);
   padding: 1.5rem 0;
   text-align: center;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   opacity: 0.5;
 }
 
-/* Prompt List Item */
 .promptItem {
   padding: 1rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  transition: background-color 0.1s;
 }
-
-.promptItem:hover {
-  background-color: var(--background);
-}
-
 .promptMeta {
   font-size: 0.8rem;
   opacity: 0.6;
   margin-top: 4px;
 }
 
-/* Mobile responsive */
-@media (max-width: 768px) {
-  .main {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* --- TAGS & ICONS --- */
-
-.tagCloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
+/* Tag Cloud */
+.tagCloud { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .tag {
   background-color: var(--border);
   color: var(--foreground);
@@ -177,74 +176,101 @@
   border-radius: 12px;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: all 0.2s;
   border: 1px solid transparent;
 }
+.tagActive { background-color: var(--primary); color: white; }
+.starBtn { background: transparent; border: none; font-size: 1.2rem; color: var(--border); cursor: pointer; padding-right: 5px;}
+.starActive { color: #fbbf24; }
+.trashActions { display: flex; gap: 0.5rem; align-items: center; }
+.btnRestore, .btnDanger { font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 4px; background: transparent; }
+.btnRestore { border: 1px solid var(--primary); color: var(--primary); }
+.btnDanger { border: 1px solid #ef4444; color: #ef4444; }
 
-.tag:hover {
-  background-color: rgba(37, 99, 235, 0.1);
-  color: var(--primary);
-}
 
-.tagActive {
-  background-color: var(--primary);
-  color: white;
-}
+/* =========================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================= */
 
-.tagActive:hover {
-  background-color: var(--primary-hover);
-  color: white;
-}
+@media (max-width: 768px) {
+  .container {
+    padding: 0 0.5rem; /* Уменьшаем боковые отступы */
+  }
 
-.starBtn {
-  background: transparent;
-  border: none;
-  font-size: 1.2rem;
-  color: var(--border); /* Gray star by default */
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 5px 0 0;
-  transition: color 0.2s;
-}
+  .main {
+    display: block; /* Убираем грид, теперь всё в один поток */
+  }
 
-.starBtn:hover {
-  color: #fbbf24; /* Gold hover */
-}
+  /* Показываем кнопку бургера */
+  .mobileMenuBtn {
+    display: block;
+  }
 
-.starActive {
-  color: #fbbf24; /* Gold active */
-}
+  /* Логотип поменьше */
+  .logo {
+    font-size: 1.2rem;
+  }
 
-/* --- TRASH ACTIONS --- */
-.trashActions {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
+  /* Сайдбар превращаем в выезжающую панель (Drawer) */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 1000;
+    transform: translateX(-105%); /* Скрыт за экраном */
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    box-shadow: 4px 0 15px rgba(0,0,0,0.1);
+    overflow-y: auto;
+  }
 
-.btnRestore {
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid var(--primary);
-  color: var(--primary);
-  border-radius: 4px;
-}
+  /* Класс для открытия меню */
+  .sidebarOpen {
+    transform: translateX(0);
+  }
 
-.btnRestore:hover {
-  background-color: var(--primary);
-  color: white;
-}
+  /* Затемнение фона */
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    top: 0; 
+    left: 0; 
+    right: 0; 
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    backdrop-filter: blur(2px);
+  }
 
-.btnDanger {
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid #ef4444;
-  color: #ef4444;
-  border-radius: 4px;
-  background: transparent;
-}
+  .backdropVisible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 
-.btnDanger:hover {
-  background-color: #ef4444;
-  color: white;
+  /* Адаптация карточек */
+  .card {
+    padding: 1rem; /* Меньше паддинг внутри карт */
+  }
+
+  .cardTitle {
+    font-size: 1.1rem;
+  }
+
+  /* Улучшение тач-интерфейсов для элементов списка */
+  .promptItem {
+    padding: 1rem 0.5rem;
+  }
+
+  /* Навигация (Dashboard / Settings) */
+  .nav {
+    gap: 0.5rem;
+  }
+  .navLink {
+    font-size: 0.8rem;
+    padding: 0.3rem;
+  }
 }

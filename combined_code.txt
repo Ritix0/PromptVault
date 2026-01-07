@@ -60,11 +60,15 @@ button {
 
 /* src/app/layout.js */
 import "./globals.css";
-import CookieBanner from "@/components/CookieBanner/CookieBanner"; // Импортируем компонент
+import CookieBanner from "@/components/CookieBanner/CookieBanner";
 
 export const metadata = {
-  title: "PromptVault",
+  title: "PromptVault (Local-First)",
   description: "Secure, local-first prompt management",
+  // ДОБАВЛЯЕМ БЛОК verification СЮДА:
+  verification: {
+    google: "7la86cOiEIRDy-89MryYWun2PXjV209prrhDMgVbHGY",
+  },
 };
 
 export default function RootLayout({ children }) {
@@ -72,7 +76,7 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body>
         {children}
-        <CookieBanner /> {/* Вставляем баннер сюда */}
+        <CookieBanner />
       </body>
     </html>
   );
@@ -747,28 +751,43 @@ export default function Home() {
 /* src/app/privacy/page.js */
 export default function PrivacyPolicy() {
   return (
-    // ИЗМЕНЕНИЕ: color: 'var(--foreground)' вместо '#333'
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', lineHeight: '1.6', color: 'var(--foreground)' }}>
       <h1 style={{fontSize: '2rem', marginBottom: '1rem'}}>Privacy Policy</h1>
-      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 2026</p>
+      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 7, 2026</p>
 
       <h2>1. Introduction</h2>
-      <p>PromptVault ("we", "our") is a Local-First application. This means <strong>we do not operate a backend database to store your prompts or API keys</strong>. Your data remains strictly in your control.</p>
+      <p>PromptVault ("we", "our") is a Local-First application designed to help users manage, version, and execute their AI prompts. We prioritize your privacy by keeping your data on your device by default.</p>
 
-      <h2>2. Data Storage</h2>
+      <h2>2. Data Collection & Storage</h2>
       <ul>
-        <li><strong>Local Storage:</strong> Your prompts, settings, and API keys are stored in your browser's IndexedDB and LocalStorage.</li>
-        <li><strong>Google Drive (Optional):</strong> If you enable Cloud Sync, your data is backed up directly to your personal Google Drive and Google Sheets. We do not have access to these files; only your browser does.</li>
+        <li><strong>Local Data:</strong> All prompts, edit history, settings, and tags are stored locally in your browser's IndexedDB. We do not operate a backend server to store your content.</li>
+        <li><strong>API Keys:</strong> Keys for third-party AI services (OpenAI, Anthropic, Gemini, DeepSeek, etc.) are stored exclusively on your device (in Local Storage) and are sent directly to the respective providers' APIs. They are never transmitted to our servers.</li>
       </ul>
 
-      <h2>3. API Keys</h2>
-      <p>PromptVault uses a "Bring Your Own Key" (BYOK) architecture. Your API keys (OpenAI, Anthropic, etc.) are encrypted and stored locally on your device. They are sent directly from your browser to the respective AI provider's API. They are never sent to our servers.</p>
+      <h2>3. Google User Data (Cloud Sync Feature)</h2>
+      <p>If you choose to enable the optional "Cloud Sync" feature to backup your data, PromptVault interacts with your Google account as follows:</p>
+      
+      <h3>Data Accessed</h3>
+      <p>We request access to the following Google OAuth scopes:</p>
+      <ul>
+        <li><strong>Google Drive (https://www.googleapis.com/auth/drive.file):</strong> This scope allows us to create and update only the specific backup files created by this app (e.g., `promptvault_backup.json`). We cannot access your other personal files or photos.</li>
+        <li><strong>Google Sheets (https://www.googleapis.com/auth/spreadsheets):</strong> This scope allows us to create a specific spreadsheet named "PromptVault_History" and append rows to it when you execute a prompt.</li>
+      </ul>
 
-      <h2>4. Google User Data</h2>
-      <p>If you choose to sign in with Google, we use OAuth verification solely to allow the application to write backups to <em>your</em> Google Drive. We do not collect, sell, or view your Google user data.</p>
+      <h3>Data Usage</h3>
+      <p>The data accessed from Google APIs is used solely for the following user-facing features:</p>
+      <ul>
+        <li><strong>Backup & Restore:</strong> To save a secure copy of your local database to your personal Google Drive, preventing data loss if you clear your browser cache.</li>
+        <li><strong>Logging:</strong> To automatically record your prompt inputs and AI outputs into a Google Sheet for your personal analysis and history tracking.</li>
+      </ul>
+      <p><strong>We do not share, sell, or transfer your Google User Data to any third parties.</strong> The data transfer happens directly between your client-side browser and Google's servers.</p>
+
+      <h2>4. Limited Use Disclosure</h2>
+      <p>PromptVault's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" style={{color: 'var(--primary)'}}>Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
       <h2>5. Contact</h2>
-      <p>If you have questions about this policy or discover a bug, please contact us at: <strong>milligat13@gmail.com</strong></p>
+      <p>If you have any questions about this Privacy Policy or your data, please contact us at:</p>
+      <p><strong>Email:</strong> milligat13@gmail.com</p>
       
       <div style={{marginTop: '2rem'}}>
         <a href="/" style={{color: 'var(--primary)', textDecoration: 'underline'}}>← Back to App</a>
@@ -782,26 +801,34 @@ export default function PrivacyPolicy() {
 /* src/app/terms/page.js */
 export default function TermsOfService() {
   return (
-    // ИЗМЕНЕНИЕ: color: 'var(--foreground)' вместо '#333'
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', lineHeight: '1.6', color: 'var(--foreground)' }}>
       <h1 style={{fontSize: '2rem', marginBottom: '1rem'}}>Terms of Service</h1>
-      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 2026</p>
+      <p style={{opacity: 0.6, marginBottom: '2rem'}}>Last updated: January 7, 2026</p>
 
       <h2>1. Acceptance of Terms</h2>
-      <p>By accessing and using PromptVault, you accept and agree to be bound by the terms and provision of this agreement.</p>
+      <p>By accessing and using PromptVault (hosted at prompt-stash.xyz), you accept and agree to be bound by the terms and provision of this agreement.</p>
 
-      <h2>2. "As Is" Software</h2>
-      <p>PromptVault is provided "as is". We connect to third-party APIs (OpenAI, Anthropic, etc.), but we cannot guarantee their availability. If a third-party provider changes their API or blocks requests, PromptVault may lose functionality temporarily.</p>
+      <h2>2. "Local-First" Architecture & Data Liability</h2>
+      <p>PromptVault operates on a "Local-First" basis. Your data is stored in your browser's local storage (IndexedDB). <strong>You are responsible for backing up your data</strong> (using the provided Export to JSON or Google Drive Sync features).</p>
+      <p>We are not liable for data loss caused by clearing your browser cache, device failure, or accidental deletion.</p>
 
-      <h2>3. PRO License & Refunds</h2>
-      <p>The PRO license unlocks advanced interface features. <strong>Please test the Free Trial version before purchasing</strong> to ensure the API connection works from your location/network.</p>
-      <p>Due to the nature of digital license keys, refunds are generally not provided unless the key itself is proven invalid.</p>
+      <h2>3. Third-Party APIs</h2>
+      <p>The application allows you to connect to third-party AI providers (OpenAI, Anthropic, Google Gemini, DeepSeek, etc.) using your own API keys. We are not responsible for:</p>
+      <ul>
+        <li>The availability or uptime of these third-party services.</li>
+        <li>Costs incurred on your own API keys.</li>
+        <li>The content generated by these AI models.</li>
+      </ul>
 
-      <h2>4. User Responsibility</h2>
-      <p>You are responsible for maintaining the confidentiality of your own data (via Google Drive backups) and your API keys.</p>
+      <h2>4. PRO License & Refunds</h2>
+      <p>The PRO license unlocks advanced interface features (such as "Automator" mode and "Arena").</p>
+      <p><strong>Refund Policy:</strong> Since the software offers a Free Trial (10 runs) to test functionality, and the license key is a digital non-returnable item, refunds are generally not provided unless the key is technically invalid.</p>
 
-      <h2>5. Contact & Support</h2>
-      <p>For support, bug reports, or license issues, contact: <strong>milligat13@gmail.com</strong></p>
+      <h2>5. User Conduct</h2>
+      <p>You agree not to use the application to generate content that violates the usage policies of the connected AI providers (e.g., generating illegal or harmful content).</p>
+
+      <h2>6. Contact & Support</h2>
+      <p>For support, bug reports, or license issues, please contact: <strong>milligat13@gmail.com</strong></p>
 
       <div style={{marginTop: '2rem'}}>
         <a href="/" style={{color: 'var(--primary)', textDecoration: 'underline'}}>← Back to App</a>

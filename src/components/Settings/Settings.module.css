@@ -42,6 +42,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap; /* Позволяет перенос на средних экранах */
+  gap: 0.5rem;
 }
 
 .cardTitleFlex {
@@ -87,6 +89,7 @@
 .inputRow {
   display: flex;
   gap: 1rem;
+  align-items: center;
 }
 
 .textInput {
@@ -97,6 +100,7 @@
   background-color: var(--card-bg);
   color: var(--foreground);
   font-family: monospace;
+  min-width: 0; /* Важно для flex-контейнеров */
 }
 
 .textInput:focus {
@@ -112,6 +116,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap; /* Чтобы текст не ломался */
 }
 
 .badgeSuccess {
@@ -129,7 +134,7 @@
 /* Статистика */
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); /* Чуть уменьшил минимум */
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
@@ -163,6 +168,7 @@
   gap: 0.5rem;
   transition: all 0.2s;
   justify-content: center;
+  cursor: pointer;
 }
 
 .btnPrimary {
@@ -211,7 +217,7 @@
   color: #ef4444;
 }
 
-/* Toast Notification (Small fix) */
+/* Toast Notification */
 .toast {
   position: fixed;
   bottom: 2rem;
@@ -225,9 +231,61 @@
   transform: translateY(20px);
   transition: all 0.3s;
   z-index: 100;
+  max-width: 90vw; /* Защита от переполнения */
 }
 
 .toastVisible {
   opacity: 1;
   transform: translateY(0);
+}
+
+
+/* ==========================================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================================== */
+
+@media (max-width: 768px) {
+  /* 1. Карточки: Заголовок и статус друг под другом */
+  .cardHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  /* Бейдж растягивается или выравнивается слева */
+  .badge {
+    align-self: flex-start;
+  }
+
+  /* 2. Строки ввода: Поле и кнопка друг под другом */
+  .inputRow {
+    flex-direction: column;
+    align-items: stretch; /* Растянуть на всю ширину */
+    gap: 0.8rem;
+  }
+
+  /* 3. Кнопки и инпуты на всю ширину */
+  .btn, .textInput, .btnOutline, .btnPrimary {
+    width: 100%;
+  }
+
+  /* У кнопок "глаз" для пароля делаем исключение, если они внутри inputRow? 
+     В текущем JSX кнопка глаза - это btnOutline. 
+     Если хотим, чтобы она была сбоку, нужно вложенность менять, 
+     но проще сделать её на всю ширину для надежности тапа. */
+
+  /* 4. Toast: По центру внизу */
+  .toast {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    text-align: center;
+    width: auto;
+    max-width: none;
+  }
+
+  /* 5. Уменьшаем отступы в теле карточки */
+  .cardBody {
+    padding: 1rem;
+  }
 }
