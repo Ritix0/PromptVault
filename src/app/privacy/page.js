@@ -21,14 +21,12 @@ export default function PrivacyPolicy() {
       <p>We request access to the following Google OAuth scopes:</p>
       <ul>
         <li><strong>Google Drive (https://www.googleapis.com/auth/drive.file):</strong> This scope allows us to create and update only the specific backup files created by this app (e.g., `promptvault_backup.json`). We cannot access your other personal files or photos.</li>
-        <li><strong>Google Sheets (https://www.googleapis.com/auth/spreadsheets):</strong> This scope allows us to create a specific spreadsheet named "PromptVault_History" and append rows to it when you execute a prompt.</li>
       </ul>
 
       <h3>Data Usage</h3>
       <p>The data accessed from Google APIs is used solely for the following user-facing features:</p>
       <ul>
         <li><strong>Backup & Restore:</strong> To save a secure copy of your local database to your personal Google Drive, preventing data loss if you clear your browser cache.</li>
-        <li><strong>Logging:</strong> To automatically record your prompt inputs and AI outputs into a Google Sheet for your personal analysis and history tracking.</li>
       </ul>
       <p><strong>We do not share, sell, or transfer your Google User Data to any third parties.</strong> The data transfer happens directly between your client-side browser and Google's servers.</p>
 
