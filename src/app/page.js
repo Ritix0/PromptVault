@@ -8,8 +8,11 @@ import { googleService } from "@/services/google";
 import { userService } from "@/services/user"; 
 import PromptEditor from "@/components/PromptEditor/PromptEditor";
 import Settings from "@/components/Settings/Settings";
+import { useUI } from "@/context/UIContext"; // Импорт хука UI
 
 export default function Home() {
+  const { showToast, showConfirm, showAlert, showChoice } = useUI(); // Подключаем уведомления и выбор
+
   const [view, setView] = useState("list"); 
   const [folder, setFolder] = useState("all"); 
   const [prompts, setPrompts] = useState([]);
@@ -21,7 +24,7 @@ export default function Home() {
   // Состояние для визуализации процесса синхронизации
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // НОВОЕ: Состояние для мобильного меню
+  // Состояние для мобильного меню
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Загрузка данных
@@ -37,6 +40,7 @@ export default function Home() {
         setPrompts(sorted);
     } catch (error) {
         console.error("Failed to load prompts", error);
+        showToast("Error loading data", "error");
     } finally {
         setIsLoading(false);
     }
@@ -78,12 +82,11 @@ export default function Home() {
     const savedPrompt = await storageService.savePrompt(promptData);
     await loadPrompts();
     setView("list");
+    showToast("Prompt saved successfully", "success");
 
     // Фоновая синхронизация при сохранении (ТОЛЬКО БЭКАП)
     if (localStorage.getItem("pv_google_token")) {
         console.log("🔄 Background Backup...");
-        // Убрали вызов googleService.appendToSheet
-        
         // Отправляем полный JSON с метаданными
         storageService.getRawData().then(json => {
             googleService.uploadBackup(json).catch(err => console.warn("Backup sync failed:", err));
@@ -95,19 +98,29 @@ export default function Home() {
     await storageService.deletePrompt(id); 
     await loadPrompts();
     setView("list");
+    showToast("Moved to Trash", "info");
   };
 
   const handleRestore = async (e, id) => {
     e.stopPropagation();
     await storageService.restorePrompt(id);
     await loadPrompts();
+    showToast("Prompt Restored", "success");
   };
 
   const handlePermanentDelete = async (e, id) => {
     e.stopPropagation();
-    if(confirm("Delete forever? This cannot be undone.")) {
+    // ЗАМЕНА confirm НА showConfirm
+    const isConfirmed = await showConfirm(
+        "Delete Forever?", 
+        "This action cannot be undone. Are you sure?", 
+        { variant: "danger", confirmText: "Delete" }
+    );
+
+    if(isConfirmed) {
         await storageService.permanentDelete(id);
         await loadPrompts();
+        showToast("Prompt deleted forever", "success");
     }
   };
 
@@ -121,7 +134,6 @@ export default function Home() {
     setSelectedTags(prev => 
         prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
     );
-    // Примечание: Мы НЕ закрываем меню при выборе тега, чтобы можно было выбрать несколько
   };
 
   const handleDataChanged = () => {
@@ -132,9 +144,9 @@ export default function Home() {
   const handleQuickSync = async () => {
       // 0. Проверка авторизации
       if (!localStorage.getItem("pv_google_token")) {
-          alert("⚠️ Not connected to Google.\nPlease go to Settings and sign in first.");
+          showToast("⚠️ Not connected to Google. Go to Settings.", "error");
           setView("settings");
-          closeMobileMenu(); // Закрываем меню, если переходим в настройки
+          closeMobileMenu(); 
           return;
       }
 
@@ -147,8 +159,24 @@ export default function Home() {
           
           let mergedCount = 0;
           if (cloudData) {
-              // Объединяем данные (включая восстановление лицензии и Device ID)
-              mergedCount = await storageService.mergeData(cloudData);
+              // ИСПОЛЬЗУЕМ ВЫБОР ИЗ 3-Х ВАРИАНТОВ
+              const strategy = await showChoice(
+                  "Sync Conflict Resolution",
+                  "Cloud data found. Select how to merge:",
+                  [
+                      { label: "☁️ Cloud > Local", value: "cloud_force", variant: "danger" },
+                      { label: "🧠 Smart Merge", value: "newest", variant: "primary" },
+                      { label: "💻 Local > Cloud", value: "local_force", variant: "default" }
+                  ]
+              );
+
+              // Если юзер кликнул мимо или закрыл - прерываем
+              if (!strategy) {
+                  setIsSyncing(false);
+                  return; 
+              }
+
+              mergedCount = await storageService.mergeData(cloudData, strategy);
           }
 
           // --- ЭТАП Б: RELOAD & SAFETY CHECK ---
@@ -156,7 +184,10 @@ export default function Home() {
           const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
           
           if (allPrompts.length === 0 && cloudHasPrompts) {
-              alert("⚠️ SAFETY STOP: Cloud has data, but local database is empty after merge.\nUpload aborted to prevent data loss.");
+              await showAlert(
+                  "⚠️ SAFETY STOP", 
+                  "Cloud has data, but local database is empty after merge.\nUpload aborted to prevent data loss."
+              );
               setIsSyncing(false); 
               return; 
           }
@@ -176,11 +207,11 @@ export default function Home() {
           }
 
           await loadPrompts(); // Обновляем UI
-          alert(`✅ Sync Complete!\nPulled: ${mergedCount} new items.\nCloud and Local are in sync.`);
+          showToast(`✅ Sync Complete! Pulled ${mergedCount} items.`, "success");
 
       } catch (e) {
           console.error("Quick sync failed:", e);
-          alert(`❌ Sync Error: ${e.message || "Unknown error"}.\nCheck console for details.`);
+          showToast(`❌ Sync Error: ${e.message || "Unknown error"}`, "error");
       } finally {
           setIsSyncing(false);
           closeMobileMenu(); // Закрываем меню после завершения

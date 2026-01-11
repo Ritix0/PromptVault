@@ -9,8 +9,10 @@ import styles from "./PromptEditor.module.css";
 import { storageService } from "@/services/storage";
 import { llmService } from "@/services/llm";
 import { userService } from "@/services/user"; 
+import { useUI } from "@/context/UIContext"; // Импорт UI Context
 
 export default function PromptEditor({ initialData, onSave, onCancel, onDelete, onUpdate }) {
+  const { showToast, showConfirm, showAlert } = useUI(); // Хуки UI
   const [activeTab, setActiveTab] = useState("edit");
   
   // 1. Изменение: Стейт для прав и триалов
@@ -136,7 +138,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
     };
     checkUserStatus();
 
-  }, [initialData]); // Убран isPro из зависимостей, так как он теперь управляется внутри
+  }, [initialData]); 
 
   // --- COMPARE LOGIC ---
   const allVersions = useMemo(() => {
@@ -191,18 +193,27 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
     else { setIsDeleteConfirming(true); setTimeout(() => setIsDeleteConfirming(false), 3000); }
   };
 
-  const handleRestore = (h) => {
-    if(confirm(`Restore v${h.version}? Current unsaved changes will be lost.`)) { 
+  const handleRestore = async (h) => {
+    // ЗАМЕНА confirm НА showConfirm
+    const isConfirmed = await showConfirm(
+        `Restore v${h.version}?`,
+        "Current unsaved changes will be lost.",
+        { confirmText: "Restore", variant: "default" }
+    );
+    
+    if(isConfirmed) { 
         setTitle(h.title); 
         setContent(h.content); 
         if (h.testInput) setTestInput(h.testInput);
-        setActiveTab("edit"); 
+        setActiveTab("edit");
+        showToast("Version restored", "info");
     }
   };
 
   // --- CLIPBOARD HELPERS ---
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
+    showToast("Copied to clipboard", "success");
   };
 
   const openExternal = (url) => {
@@ -236,12 +247,17 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   };
 
   const handleRunClick = async () => {
-    if (!content.trim()) { alert("System prompt is empty!"); return; }
+    if (!content.trim()) { 
+        // ЗАМЕНА alert
+        showToast("System prompt is empty!", "error"); 
+        return; 
+    }
     
     // 4. Изменение: Проверка прав (Check Access)
     const access = await userService.canRunAI();
     if (!access.allowed) {
-        alert(access.reason);
+        // ЗАМЕНА alert
+        showAlert("Limit Reached", access.reason);
         return;
     }
     
@@ -348,7 +364,8 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
                         className={`${styles.execBtn} ${executionMode === 'auto' ? styles.execBtnActive : ''}`}
                         onClick={() => {
                             if(hasApiKey) setExecutionMode('auto');
-                            else alert("Please add an API key in Settings first.");
+                            // ЗАМЕНА alert
+                            else showToast("Please add an API key in Settings first.", "error");
                         }}
                     >
                         🤖 Auto (API)

@@ -91,7 +91,7 @@ import { useState, useEffect } from "react";
 import styles from "./page.module.css";
 import { storageService } from "@/services/storage";
 import { googleService } from "@/services/google"; 
-import { userService } from "@/services/user"; // НОВОЕ: Импортируем для проверки статуса
+import { userService } from "@/services/user"; 
 import PromptEditor from "@/components/PromptEditor/PromptEditor";
 import Settings from "@/components/Settings/Settings";
 
@@ -106,6 +106,9 @@ export default function Home() {
   
   // Состояние для визуализации процесса синхронизации
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // НОВОЕ: Состояние для мобильного меню
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Загрузка данных
   useEffect(() => {
@@ -124,6 +127,9 @@ export default function Home() {
         setIsLoading(false);
     }
   };
+
+  // --- ХЕЛПЕРЫ ---
+  const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
   // --- ЛОГИКА ФИЛЬТРАЦИИ ---
   const allTags = [...new Set(prompts
@@ -159,10 +165,10 @@ export default function Home() {
     await loadPrompts();
     setView("list");
 
-    // Фоновая синхронизация при сохранении (упрощенная)
+    // Фоновая синхронизация при сохранении (ТОЛЬКО БЭКАП)
     if (localStorage.getItem("pv_google_token")) {
-        console.log("🔄 Background Syncing...");
-        googleService.appendToSheet(savedPrompt).catch(err => console.warn("Sheet sync failed:", err));
+        console.log("🔄 Background Backup...");
+        // Убрали вызов googleService.appendToSheet
         
         // Отправляем полный JSON с метаданными
         storageService.getRawData().then(json => {
@@ -201,18 +207,20 @@ export default function Home() {
     setSelectedTags(prev => 
         prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
     );
+    // Примечание: Мы НЕ закрываем меню при выборе тега, чтобы можно было выбрать несколько
   };
 
   const handleDataChanged = () => {
     loadPrompts();
   };
 
-  // --- ИСПРАВЛЕННАЯ ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
+  // --- ЛОГИКА БЫСТРОЙ СИНХРОНИЗАЦИИ ---
   const handleQuickSync = async () => {
       // 0. Проверка авторизации
       if (!localStorage.getItem("pv_google_token")) {
           alert("⚠️ Not connected to Google.\nPlease go to Settings and sign in first.");
           setView("settings");
+          closeMobileMenu(); // Закрываем меню, если переходим в настройки
           return;
       }
 
@@ -230,10 +238,7 @@ export default function Home() {
           }
 
           // --- ЭТАП Б: RELOAD & SAFETY CHECK ---
-          // Получаем актуальное состояние локальной базы после слияния
           const allPrompts = await storageService.getAllPrompts();
-          
-          // Проверяем: если в облаке были данные, а у нас 0 - значит что-то пошло не так.
           const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
           
           if (allPrompts.length === 0 && cloudHasPrompts) {
@@ -244,22 +249,13 @@ export default function Home() {
 
           // --- ЭТАП В: PUSH (Отправка) ---
           console.log("⬆️ Pushing to Cloud...");
-          
-          // 1. Получаем JSON с метаданными (включая лицензию и Device ID)
           const rawData = await storageService.getRawData();
-          
-          // 2. Отправляем и JSON, и массив для таблицы
           await googleService.syncEverything(rawData, allPrompts);
-          
-          // 3. Очищаем лог удаленных
           storageService.clearDeletedLog();
 
           // --- ЭТАП Г: AUTO-VERIFY & FINALIZE ---
-          // Если синхронизация подтянула ключ, проверяем его статус тихо
           const key = await storageService.getSetting("license_key");
           if (key) {
-               // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
-               // Не блокируем UI, просто обновляем статус в фоне
                userService.verifyKeyOnServer(key).then(isValid => {
                    if(isValid) console.log("License verified after sync");
                });
@@ -272,27 +268,45 @@ export default function Home() {
           console.error("Quick sync failed:", e);
           alert(`❌ Sync Error: ${e.message || "Unknown error"}.\nCheck console for details.`);
       } finally {
-          setIsSyncing(false); // Выключаем индикатор в любом случае
+          setIsSyncing(false);
+          closeMobileMenu(); // Закрываем меню после завершения
       }
   };
 
   return (
     <div className={styles.container}>
+      {/* Затемнение фона (Backdrop) для мобильного меню */}
+      <div 
+        className={`${styles.mobileBackdrop} ${isMobileMenuOpen ? styles.backdropVisible : ''}`}
+        onClick={closeMobileMenu}
+      />
+
       <header className={styles.header}>
-        <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
-            PromptVault
+        {/* Группировка для мобильного меню и лого */}
+        <div className={styles.headerLeft}>
+            <button 
+                className={styles.mobileMenuBtn}
+                onClick={() => setIsMobileMenuOpen(true)}
+                aria-label="Open Menu"
+            >
+                ☰
+            </button>
+            <div className={styles.logo} onClick={() => { setView("list"); setFolder("all"); }} style={{cursor: 'pointer'}}>
+                PromptVault
+            </div>
         </div>
+
         <nav className={styles.nav}>
           <button 
             className={styles.navLink} 
-            onClick={() => setView("list")}
+            onClick={() => { setView("list"); closeMobileMenu(); }}
             style={{ fontWeight: view === 'list' ? 'bold' : 'normal' }}
           >
             Dashboard
           </button>
           <button 
             className={styles.navLink} 
-            onClick={() => setView("settings")}
+            onClick={() => { setView("settings"); closeMobileMenu(); }}
             style={{ fontWeight: view === 'settings' ? 'bold' : 'normal' }}
           >
             Settings
@@ -301,26 +315,40 @@ export default function Home() {
       </header>
 
       <main className={styles.main}>
-        <aside className={styles.sidebar}>
-          <div className={styles.sidebarTitle}>Explorer</div>
+        {/* Добавляем класс sidebarOpen при открытии меню */}
+        <aside className={`${styles.sidebar} ${isMobileMenuOpen ? styles.sidebarOpen : ''}`}>
+          
+          {/* Заголовок сайдбара с кнопкой закрытия для мобильных */}
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+              <div className={styles.sidebarTitle} style={{marginBottom: 0}}>Explorer</div>
+              {/* Кнопка закрытия видна только на мобильных благодаря CSS (можно доработать, но пока используем общий класс) */}
+              <button 
+                className={styles.mobileMenuBtn} 
+                onClick={closeMobileMenu}
+                style={{border: 'none', padding: 0, fontSize: '1.5rem'}}
+              >
+                ✕
+              </button>
+          </div>
+
           <ul className={styles.menuList}>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("all"); setView("list"); }}
+              onClick={() => { setFolder("all"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'all' && view === 'list' ? 'bold' : 'normal', background: folder === 'all' && view === 'list' ? 'var(--border)' : 'transparent' }}
             >
               📂 All Prompts
             </li>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("favorites"); setView("list"); }}
+              onClick={() => { setFolder("favorites"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'favorites' ? 'bold' : 'normal', background: folder === 'favorites' ? 'var(--border)' : 'transparent' }}
             >
               ⭐ Favorites
             </li>
             <li 
               className={styles.menuItem} 
-              onClick={() => { setFolder("trash"); setView("list"); }}
+              onClick={() => { setFolder("trash"); setView("list"); closeMobileMenu(); }}
               style={{ fontWeight: folder === 'trash' ? 'bold' : 'normal', background: folder === 'trash' ? 'var(--border)' : 'transparent', color: folder === 'trash' ? '#ef4444' : 'inherit' }}
             >
               🗑️ Trash
@@ -345,7 +373,7 @@ export default function Home() {
           
           <div className={styles.sidebarTitle} style={{marginTop: '2rem'}}>Quick Actions</div>
           <ul className={styles.menuList}>
-            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); }}>
+            <li className={styles.menuItem} onClick={() => { setCurrentPrompt(null); setView("create"); closeMobileMenu(); }}>
               ➕ New Prompt
             </li>
             {/* КНОПКА СИНХРОНИЗАЦИИ */}
@@ -503,22 +531,44 @@ export default function Home() {
   display: flex;
   flex-direction: column;
   padding: 0 1rem;
+  position: relative; /* Важно для позиционирования шторки */
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1.5rem 0;
+  padding: 1rem 0; /* Чуть меньше отступы */
   border-bottom: 1px solid var(--border);
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+}
+
+/* Группа для лого и бургера */
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .logo {
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   font-weight: 700;
   color: var(--primary);
   letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+
+/* Кнопка меню (бургер) - по умолчанию скрыта */
+.mobileMenuBtn {
+  display: none; 
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--foreground);
 }
 
 .nav {
@@ -532,11 +582,7 @@ export default function Home() {
   color: var(--foreground);
   opacity: 0.8;
   transition: opacity 0.2s;
-  background: transparent; /* Страховка */
-}
-
-.navLink:hover {
-  opacity: 1;
+  background: transparent;
 }
 
 .main {
@@ -545,15 +591,22 @@ export default function Home() {
   grid-template-columns: 250px 1fr;
   gap: 2rem;
   padding-bottom: 2rem;
+  position: relative;
 }
 
-/* Sidebar styles */
+/* Sidebar styles - Desktop Default */
 .sidebar {
   background-color: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 1rem;
   height: fit-content;
+  transition: transform 0.3s ease;
+}
+
+/* Затемнение фона при открытом меню */
+.mobileBackdrop {
+  display: none;
 }
 
 .sidebarTitle {
@@ -565,10 +618,7 @@ export default function Home() {
   font-weight: 700;
 }
 
-.menuList {
-  list-style: none;
-}
-
+.menuList { list-style: none; }
 .menuItem {
   margin-bottom: 0.5rem;
   padding: 0.5rem;
@@ -576,16 +626,14 @@ export default function Home() {
   cursor: pointer;
   transition: background-color 0.2s;
 }
-
-.menuItem:hover {
-  background-color: var(--background);
-}
+.menuItem:hover { background-color: var(--background); }
 
 /* Workspace styles */
 .workspace {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0; /* Важно для grid/flex внутри, чтобы текст не распирал контейнер */
 }
 
 .card {
@@ -601,6 +649,8 @@ export default function Home() {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-wrap: wrap; /* Позволяет заголовку и кнопке переноситесь */
+  gap: 0.5rem;
 }
 
 .cardTitle {
@@ -608,17 +658,14 @@ export default function Home() {
   font-weight: 600;
 }
 
-/* Новый класс для кнопки Create вместо inline-стилей */
 .createBtn {
   color: var(--primary);
   font-weight: 600;
   font-size: 0.95rem;
   background: transparent;
-  transition: opacity 0.2s;
-}
-
-.createBtn:hover {
-  opacity: 0.8;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--primary); /* Добавил рамку для мобилок */
+  border-radius: 6px;
 }
 
 .placeholderText {
@@ -630,43 +677,23 @@ export default function Home() {
   border-top: 1px solid var(--border);
   padding: 1.5rem 0;
   text-align: center;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   opacity: 0.5;
 }
 
-/* Prompt List Item */
 .promptItem {
   padding: 1rem;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-  transition: background-color 0.1s;
 }
-
-.promptItem:hover {
-  background-color: var(--background);
-}
-
 .promptMeta {
   font-size: 0.8rem;
   opacity: 0.6;
   margin-top: 4px;
 }
 
-/* Mobile responsive */
-@media (max-width: 768px) {
-  .main {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* --- TAGS & ICONS --- */
-
-.tagCloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
+/* Tag Cloud */
+.tagCloud { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .tag {
   background-color: var(--border);
   color: var(--foreground);
@@ -674,76 +701,103 @@ export default function Home() {
   border-radius: 12px;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: all 0.2s;
   border: 1px solid transparent;
 }
+.tagActive { background-color: var(--primary); color: white; }
+.starBtn { background: transparent; border: none; font-size: 1.2rem; color: var(--border); cursor: pointer; padding-right: 5px;}
+.starActive { color: #fbbf24; }
+.trashActions { display: flex; gap: 0.5rem; align-items: center; }
+.btnRestore, .btnDanger { font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 4px; background: transparent; }
+.btnRestore { border: 1px solid var(--primary); color: var(--primary); }
+.btnDanger { border: 1px solid #ef4444; color: #ef4444; }
 
-.tag:hover {
-  background-color: rgba(37, 99, 235, 0.1);
-  color: var(--primary);
-}
 
-.tagActive {
-  background-color: var(--primary);
-  color: white;
-}
+/* =========================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================= */
 
-.tagActive:hover {
-  background-color: var(--primary-hover);
-  color: white;
-}
+@media (max-width: 768px) {
+  .container {
+    padding: 0 0.5rem; /* Уменьшаем боковые отступы */
+  }
 
-.starBtn {
-  background: transparent;
-  border: none;
-  font-size: 1.2rem;
-  color: var(--border); /* Gray star by default */
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 5px 0 0;
-  transition: color 0.2s;
-}
+  .main {
+    display: block; /* Убираем грид, теперь всё в один поток */
+  }
 
-.starBtn:hover {
-  color: #fbbf24; /* Gold hover */
-}
+  /* Показываем кнопку бургера */
+  .mobileMenuBtn {
+    display: block;
+  }
 
-.starActive {
-  color: #fbbf24; /* Gold active */
-}
+  /* Логотип поменьше */
+  .logo {
+    font-size: 1.2rem;
+  }
 
-/* --- TRASH ACTIONS --- */
-.trashActions {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
+  /* Сайдбар превращаем в выезжающую панель (Drawer) */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 1000;
+    transform: translateX(-105%); /* Скрыт за экраном */
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    box-shadow: 4px 0 15px rgba(0,0,0,0.1);
+    overflow-y: auto;
+  }
 
-.btnRestore {
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid var(--primary);
-  color: var(--primary);
-  border-radius: 4px;
-}
+  /* Класс для открытия меню */
+  .sidebarOpen {
+    transform: translateX(0);
+  }
 
-.btnRestore:hover {
-  background-color: var(--primary);
-  color: white;
-}
+  /* Затемнение фона */
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    top: 0; 
+    left: 0; 
+    right: 0; 
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    backdrop-filter: blur(2px);
+  }
 
-.btnDanger {
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid #ef4444;
-  color: #ef4444;
-  border-radius: 4px;
-  background: transparent;
-}
+  .backdropVisible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 
-.btnDanger:hover {
-  background-color: #ef4444;
-  color: white;
+  /* Адаптация карточек */
+  .card {
+    padding: 1rem; /* Меньше паддинг внутри карт */
+  }
+
+  .cardTitle {
+    font-size: 1.1rem;
+  }
+
+  /* Улучшение тач-интерфейсов для элементов списка */
+  .promptItem {
+    padding: 1rem 0.5rem;
+  }
+
+  /* Навигация (Dashboard / Settings) */
+  .nav {
+    gap: 0.5rem;
+  }
+  .navLink {
+    font-size: 0.8rem;
+    padding: 0.3rem;
+  }
 }
 
 --- Файл: src\app\privacy\page.js ---
@@ -771,14 +825,12 @@ export default function PrivacyPolicy() {
       <p>We request access to the following Google OAuth scopes:</p>
       <ul>
         <li><strong>Google Drive (https://www.googleapis.com/auth/drive.file):</strong> This scope allows us to create and update only the specific backup files created by this app (e.g., `promptvault_backup.json`). We cannot access your other personal files or photos.</li>
-        <li><strong>Google Sheets (https://www.googleapis.com/auth/spreadsheets):</strong> This scope allows us to create a specific spreadsheet named "PromptVault_History" and append rows to it when you execute a prompt.</li>
       </ul>
 
       <h3>Data Usage</h3>
       <p>The data accessed from Google APIs is used solely for the following user-facing features:</p>
       <ul>
         <li><strong>Backup & Restore:</strong> To save a secure copy of your local database to your personal Google Drive, preventing data loss if you clear your browser cache.</li>
-        <li><strong>Logging:</strong> To automatically record your prompt inputs and AI outputs into a Google Sheet for your personal analysis and history tracking.</li>
       </ul>
       <p><strong>We do not share, sell, or transfer your Google User Data to any third parties.</strong> The data transfer happens directly between your client-side browser and Google's servers.</p>
 
@@ -1528,6 +1580,17 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   gap: 1rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1rem;
+  /* Для мобильных: чтобы вкладки можно было скроллить, если не влезают */
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+  padding-bottom: 2px; /* Место под скроллбар (если виден) */
+}
+
+/* Скрываем скроллбар для эстетики */
+.tabs::-webkit-scrollbar {
+  height: 0px;
+  background: transparent;
 }
 
 .tab {
@@ -1538,6 +1601,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   opacity: 0.6;
   border-bottom: 2px solid transparent;
   transition: all 0.2s;
+  flex-shrink: 0; /* Не сжимать вкладки */
 }
 
 .tab:hover {
@@ -1556,6 +1620,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   align-items: center;
   gap: 0.8rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap; /* Разрешаем перенос на маленьких экранах */
 }
 
 .roleBadge {
@@ -1630,12 +1695,18 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   justify-content: space-between;
   align-items: center;
   padding-top: 1rem;
+  gap: 1rem; /* Отступ между группами кнопок */
 }
 
 .actionsRight {
   display: flex;
   gap: 1rem;
 }
+.actionsLeft {
+  display: flex;
+  gap: 1rem;
+}
+
 
 .btnPrimary {
   background-color: var(--primary);
@@ -1644,6 +1715,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   border-radius: 6px;
   font-weight: 500;
   transition: background-color 0.2s;
+  border: none;
 }
 
 .btnPrimary:hover {
@@ -1903,13 +1975,6 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
 }
 
-/* Адаптив: на мобилках арена превращается в колонку */
-@media (max-width: 768px) {
-  .arenaGrid {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* --- MANUAL MODE STYLES --- */
 .manualContainer {
   display: flex;
@@ -1966,6 +2031,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   gap: 1rem;
   justify-content: center;
   margin-top: 0.5rem;
+  flex-wrap: wrap; /* Разрешаем перенос ссылок */
 }
 
 .linkBtn {
@@ -1974,6 +2040,7 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   color: var(--primary);
   opacity: 0.8;
   cursor: pointer;
+  padding: 0.2rem; /* Увеличим зону клика */
 }
 
 .linkBtn:hover {
@@ -1984,8 +2051,8 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   width: 100%;
   min-height: 150px;
   padding: 0.8rem;
-  background-color: var(--background); /* Чуть темнее чем карточка */
-  color: var(--foreground);            /* <--- ВОТ ЭТО ИСПРАВИТ ЧЕРНЫЙ ТЕКСТ */
+  background-color: var(--background);
+  color: var(--foreground);
   border: 1px solid var(--border);
   border-radius: 6px;
   font-family: monospace;
@@ -2012,6 +2079,8 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   padding: 0.25rem;
   border-radius: 8px;
   gap: 0.25rem;
+  flex-wrap: wrap; /* Разрешаем перенос кнопок */
+  justify-content: center;
 }
 
 .execBtn {
@@ -2075,265 +2144,6 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   display: flex;
   gap: 1rem;
   flex: 1;
-  overflow: hidden; /* Чтобы скроллились колонки внутри */
-}
-
-.diffCol {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  overflow-y: auto;
-  padding-right: 0.5rem;
-}
-
-.diffBox {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background-color: var(--background);
-  padding: 1rem;
-  font-family: monospace;
-  font-size: 0.9rem;
-  white-space: pre-wrap;
-  line-height: 1.6;
-}
-
-.diffLabel {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  font-weight: 700;
-  opacity: 0.5;
-  margin-bottom: 0.3rem;
-}
-
-/* Цвета для diff */
-.diffAdded {
-  background-color: rgba(34, 197, 94, 0.2); /* Зеленый фон */
-  color: #15803d;
-  text-decoration: none;
-}
-
-.diffRemoved {
-  background-color: rgba(239, 68, 68, 0.2); /* Красный фон */
-  color: #b91c1c;
-  text-decoration: line-through;
-}
-
-/* Dark mode overrides for diff colors */
-@media (prefers-color-scheme: dark) {
-  .diffAdded {
-    background-color: rgba(34, 197, 94, 0.25);
-    color: #86efac;
-  }
-  .diffRemoved {
-    background-color: rgba(239, 68, 68, 0.25);
-    color: #fca5a5;
-  }
-}
-
-/* --- НОВЫЕ СТИЛИ ДЛЯ ИНТЕРФЕЙСА --- */
-
-/* 1. Бейджи Ролей (SYSTEM / USER) */
-.roleLabelRow {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  margin-bottom: 0.5rem;
-}
-
-.roleBadge {
-  font-size: 0.7rem;
-  font-weight: 800;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.roleSystem {
-  background-color: rgba(37, 99, 235, 0.1); /* Primary transparent */
-  color: var(--primary);
-  border: 1px solid var(--primary);
-}
-
-.roleUser {
-  background-color: rgba(34, 197, 94, 0.1); /* Green transparent */
-  color: #22c55e;
-  border: 1px solid #22c55e;
-}
-
-.roleDesc {
-  font-size: 0.8rem;
-  opacity: 0.5;
-}
-
-/* 2. Переключатель Режимов (Manual / Auto) */
-.executionSwitchContainer {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px dashed var(--border);
-}
-
-.executionSwitch {
-  display: flex;
-  background-color: var(--border);
-  padding: 0.25rem;
-  border-radius: 8px;
-  gap: 0.25rem;
-}
-
-.execBtn {
-  padding: 0.4rem 1.2rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--foreground);
-  opacity: 0.6;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.execBtn:hover {
-  opacity: 1;
-}
-
-.execBtnActive {
-  background-color: var(--card-bg);
-  color: var(--primary);
-  opacity: 1;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-}
-
-/* 3. Manual Mode (Librarian) */
-.manualContainer {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  padding: 1.5rem;
-  background-color: var(--background);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-}
-
-.manualStep {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.stepLabel {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--foreground);
-  opacity: 0.6;
-  letter-spacing: 0.5px;
-}
-
-.copyRow {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.btnCopy {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.8rem;
-  background-color: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-weight: 600;
-  transition: all 0.2s;
-  color: var(--foreground);
-}
-
-.btnCopy:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  background-color: rgba(37, 99, 235, 0.05);
-}
-
-.externalLinks {
-  display: flex;
-  gap: 1.5rem;
-  justify-content: center;
-  padding: 0.5rem;
-}
-
-.linkBtn {
-  font-size: 0.9rem;
-  text-decoration: underline;
-  color: var(--primary);
-  opacity: 0.8;
-  cursor: pointer;
-}
-
-.linkBtn:hover {
-  opacity: 1;
-}
-
-.manualResultArea {
-  width: 100%;
-  min-height: 120px;
-  padding: 0.8rem;
-  background-color: var(--card-bg);
-  color: var(--foreground); /* Исправление черного текста */
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: monospace;
-  resize: vertical;
-  outline: none;
-}
-
-.manualResultArea:focus {
-  border-color: var(--primary);
-}
-
-/* 4. Compare Tab (Diff) */
-.compareContainer {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  height: 100%;
-}
-
-.compareControls {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.compareSelector {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.compareSelect {
-  width: 100%;
-  padding: 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background-color: var(--card-bg);
-  color: var(--foreground);
-  font-size: 0.9rem;
-}
-
-.diffGrid {
-  display: flex;
-  gap: 1rem;
-  flex: 1;
   overflow: hidden;
 }
 
@@ -2355,7 +2165,6 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   font-size: 0.9rem;
   white-space: pre-wrap;
   line-height: 1.6;
-  color: var(--foreground);
 }
 
 .diffLabel {
@@ -2368,19 +2177,15 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
 
 /* Цвета для diff */
 .diffAdded {
-  background-color: #dcfce7; /* Light Green */
-  color: #166534;
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #15803d;
   text-decoration: none;
-  border-radius: 2px;
-  padding: 0 2px;
 }
 
 .diffRemoved {
-  background-color: #fee2e2; /* Light Red */
-  color: #991b1b;
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #b91c1c;
   text-decoration: line-through;
-  border-radius: 2px;
-  padding: 0 2px;
 }
 
 /* Dark mode overrides for diff colors */
@@ -2395,58 +2200,79 @@ export default function PromptEditor({ initialData, onSave, onCancel, onDelete, 
   }
 }
 
-/* Arena Grid Styles (Если их не было) */
-.arenaGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  height: 100%;
-  min-height: 400px;
-}
-
-.arenaCol {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.5rem;
-  background-color: rgba(0,0,0,0.02);
-}
-
-.arenaColHeader {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.colLabel {
-  font-weight: 700;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  opacity: 0.5;
-  text-align: center;
-}
-
-.arenaResult {
-  flex: 1;
-  background-color: #1e1e1e;
-  color: #e0e0e0;
-  border-radius: 6px;
-  padding: 1rem;
-  font-size: 0.9rem;
-  overflow-y: auto;
-  font-family: monospace;
-}
+/* ==========================================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================================== */
 
 @media (max-width: 768px) {
-  .arenaGrid {
-    grid-template-columns: 1fr;
+  /* 1. Header: Перестраиваем в колонку, заголовок поменьше */
+  .header {
+    gap: 0.8rem;
   }
-  .diffGrid {
+  .header > div { /* Row with title and input */
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .titleInput {
+    font-size: 1.2rem;
+  }
+
+  /* 2. Textareas: Уменьшаем минимальную высоту, чтобы влезало в экран */
+  .contentArea {
+    min-height: 250px;
+    padding: 0.8rem;
+    font-size: 0.95rem; /* Чуть меньше шрифт */
+  }
+
+  /* 3. Footer Buttons: Перестраиваем в колонку для удобства тапа */
+  .footer {
+    flex-direction: column-reverse; /* Сохранить и Отмена наверху (или наоборот, по вкусу) */
+    align-items: stretch; /* Кнопки на всю ширину */
+    gap: 1rem;
+  }
+  
+  .actionsRight {
+    flex-direction: column; /* Save и Cancel друг под другом */
+    width: 100%;
+  }
+
+  .actionsLeft {
+    width: 100%;
+  }
+  
+  .btnPrimary, .btnSecondary, .btnDelete, .btnDeleteConfirm {
+    width: 100%; /* Полная ширина кнопок */
+    padding: 0.8rem; /* Увеличиваем зону клика */
+  }
+
+  /* 4. Compare Controls: Селекторы друг под друга */
+  .compareControls {
     flex-direction: column;
+    gap: 1rem;
+  }
+  
+  /* 5. Grids: Выключаем грид в Арене и Diff, делаем колонки */
+  .arenaGrid {
+    grid-template-columns: 1fr; /* Одна колонка */
+    gap: 1.5rem;
+  }
+  
+  .diffGrid {
+    flex-direction: column; /* Одна колонка */
+  }
+
+  /* 6. Run Mode Controls: Улучшаем селекты моделей */
+  .runTopBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .runTopBar select {
+    width: 100%;
+  }
+  
+  /* 7. Manual Mode Copy Buttons */
+  .copyRow {
+    flex-direction: column; /* Кнопки копирования друг под друга */
   }
 }
 
@@ -3046,6 +2872,8 @@ export default function Settings({ onDataChanged }) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap; /* Позволяет перенос на средних экранах */
+  gap: 0.5rem;
 }
 
 .cardTitleFlex {
@@ -3091,6 +2919,7 @@ export default function Settings({ onDataChanged }) {
 .inputRow {
   display: flex;
   gap: 1rem;
+  align-items: center;
 }
 
 .textInput {
@@ -3101,6 +2930,7 @@ export default function Settings({ onDataChanged }) {
   background-color: var(--card-bg);
   color: var(--foreground);
   font-family: monospace;
+  min-width: 0; /* Важно для flex-контейнеров */
 }
 
 .textInput:focus {
@@ -3116,6 +2946,7 @@ export default function Settings({ onDataChanged }) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap; /* Чтобы текст не ломался */
 }
 
 .badgeSuccess {
@@ -3133,7 +2964,7 @@ export default function Settings({ onDataChanged }) {
 /* Статистика */
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); /* Чуть уменьшил минимум */
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
@@ -3167,6 +2998,7 @@ export default function Settings({ onDataChanged }) {
   gap: 0.5rem;
   transition: all 0.2s;
   justify-content: center;
+  cursor: pointer;
 }
 
 .btnPrimary {
@@ -3215,7 +3047,7 @@ export default function Settings({ onDataChanged }) {
   color: #ef4444;
 }
 
-/* Toast Notification (Small fix) */
+/* Toast Notification */
 .toast {
   position: fixed;
   bottom: 2rem;
@@ -3229,11 +3061,63 @@ export default function Settings({ onDataChanged }) {
   transform: translateY(20px);
   transition: all 0.3s;
   z-index: 100;
+  max-width: 90vw; /* Защита от переполнения */
 }
 
 .toastVisible {
   opacity: 1;
   transform: translateY(0);
+}
+
+
+/* ==========================================================
+   📱 MOBILE ADAPTATION (MEDIA QUERIES)
+   ========================================================== */
+
+@media (max-width: 768px) {
+  /* 1. Карточки: Заголовок и статус друг под другом */
+  .cardHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  /* Бейдж растягивается или выравнивается слева */
+  .badge {
+    align-self: flex-start;
+  }
+
+  /* 2. Строки ввода: Поле и кнопка друг под другом */
+  .inputRow {
+    flex-direction: column;
+    align-items: stretch; /* Растянуть на всю ширину */
+    gap: 0.8rem;
+  }
+
+  /* 3. Кнопки и инпуты на всю ширину */
+  .btn, .textInput, .btnOutline, .btnPrimary {
+    width: 100%;
+  }
+
+  /* У кнопок "глаз" для пароля делаем исключение, если они внутри inputRow? 
+     В текущем JSX кнопка глаза - это btnOutline. 
+     Если хотим, чтобы она была сбоку, нужно вложенность менять, 
+     но проще сделать её на всю ширину для надежности тапа. */
+
+  /* 4. Toast: По центру внизу */
+  .toast {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    text-align: center;
+    width: auto;
+    max-width: none;
+  }
+
+  /* 5. Уменьшаем отступы в теле карточки */
+  .cardBody {
+    padding: 1rem;
+  }
 }
 
 --- Файл: src\services\google.js ---
@@ -3242,11 +3126,13 @@ export default function Settings({ onDataChanged }) {
 
 // КОНФИГУРАЦИЯ
 const CLIENT_ID = "833291081802-47b7ntjqck33dhuldk71gpkqkp82edoj.apps.googleusercontent.com"; 
-const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets";
+
+// ИЗМЕНЕНИЕ: Оставили только безопасный доступ к файлам (Drive)
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 // Имена файлов в облаке
 const DB_FILENAME = "promptvault_backup.json";
-const SHEET_NAME = "PromptVault_History";
+// SHEET_NAME удален
 
 let tokenClient;
 let gapiInited = false;
@@ -3254,36 +3140,7 @@ let gisInited = false;
 let accessToken = null;
 let scriptsLoadingPromise = null;
 
-// Хелпер для получения ID таблицы
-let cachedSpreadsheetId = null;
-
-const getSpreadsheetId = async () => {
-    if (cachedSpreadsheetId) return cachedSpreadsheetId;
-
-    const search = await window.gapi.client.drive.files.list({
-        q: `name = '${SHEET_NAME}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
-        fields: 'files(id)',
-    });
-    
-    if (search.result.files && search.result.files.length > 0) {
-        cachedSpreadsheetId = search.result.files[0].id;
-        return cachedSpreadsheetId;
-    }
-    
-    const createRes = await window.gapi.client.sheets.spreadsheets.create({
-        properties: { title: SHEET_NAME }
-    });
-    cachedSpreadsheetId = createRes.result.spreadsheetId;
-    
-    await window.gapi.client.sheets.spreadsheets.values.append({
-        spreadsheetId: cachedSpreadsheetId,
-        range: 'A1',
-        valueInputOption: 'USER_ENTERED',
-        resource: { values: [["Date", "Version", "Title", "System Prompt", "User Input", "Result", "Model", "ID_REF"]] }
-    });
-
-    return cachedSpreadsheetId;
-};
+// Хелпер getSpreadsheetId удален, так как таблицы отключены
 
 // Внутренняя функция восстановления токена
 const ensureToken = () => {
@@ -3361,8 +3218,8 @@ export const googleService = {
           await window.gapi.client.init({
             // clientId не обязателен тут для bearer auth, но полезен для контекста
             discoveryDocs: [
-              "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
-              "https://sheets.googleapis.com/$discovery/rest?version=v4"
+              "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"
+              // Sheets API удален отсюда
             ],
           });
           gapiInited = true;
@@ -3499,29 +3356,10 @@ export const googleService = {
     }
   },
 
-  // --- SHEETS LOGGING ---
+  // --- SHEETS LOGGING (ОТКЛЮЧЕНО) ---
   appendToSheet: async (prompt) => {
-    if (!ensureToken()) return;
-    await ensureInit();
-    try {
-        const spreadsheetId = await getSpreadsheetId();
-        const row = [
-            new Date().toLocaleString(),
-            prompt.version || "1",
-            prompt.title,
-            prompt.content,
-            prompt.testInput || "",
-            prompt.lastResult || "",
-            "gpt/claude",
-            prompt.id // ID_REF в конце
-        ];
-        await window.gapi.client.sheets.spreadsheets.values.append({
-            spreadsheetId,
-            range: 'A1',
-            valueInputOption: 'USER_ENTERED',
-            resource: { values: [row] }
-        });
-    } catch (e) { handleApiError(e, 'appendToSheet'); }
+     // Заглушка: просто выходим, ничего не делаем
+     return;
   },
 
   // --- SMART SYNC (ALL) ---
@@ -3529,66 +3367,12 @@ export const googleService = {
     if (!ensureToken()) throw new Error("Not authenticated");
     await ensureInit();
 
-    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount),
-    // а не просто массив промптов.
+    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount)
     await googleService.uploadBackup(rawJsonData);
-    console.log("Backup synced (with meta).");
+    console.log("Backup synced (File Only).");
 
-    // 2. Умная синхронизация таблицы (остается как было, работает с массивом)
-    try {
-        const spreadsheetId = await getSpreadsheetId();
-        
-        const result = await window.gapi.client.sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: 'A:H', 
-        });
-
-        const rows = result.result.values || [];
-        
-        const existingSignatures = new Set();
-        rows.forEach((row, index) => {
-            if (index === 0) return;
-            const ver = row[1];
-            const id = row[7];
-            if (id && ver) {
-                existingSignatures.add(`${id}_v${ver}`);
-            }
-        });
-
-        const newRows = [];
-        
-        allPrompts.forEach(p => {
-             const currentSig = `${p.id}_v${p.version || 1}`;
-             if (!existingSignatures.has(currentSig)) {
-                 newRows.push([
-                    new Date(p.updatedAt).toLocaleString(),
-                    p.version || "1",
-                    p.title,
-                    p.content,
-                    p.testInput || "",
-                    p.lastResult || "",
-                    "batch_sync",
-                    p.id
-                 ]);
-             }
-        });
-
-        if (newRows.length > 0) {
-            await window.gapi.client.sheets.spreadsheets.values.append({
-                spreadsheetId,
-                range: 'A1',
-                valueInputOption: 'USER_ENTERED',
-                resource: { values: newRows }
-            });
-            return newRows.length;
-        } else {
-            return 0;
-        }
-
-    } catch (e) {
-        handleApiError(e, 'syncEverything:Sheets');
-        return 0;
-    }
+    // 2. Логику таблиц удалили, чтобы не вызывать ошибку прав доступа
+    return 0;
   }
 };
 

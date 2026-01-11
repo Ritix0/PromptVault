@@ -7,11 +7,13 @@ import { storageService } from "@/services/storage";
 import { llmService } from "@/services/llm";
 import { userService } from "@/services/user";
 import { googleService } from "@/services/google";
+import { useUI } from "@/context/UIContext"; // Импорт UI Context
 
 // Ссылка на магазин кодов (Вставь свою реальную ссылку Digiseller/Plati)
 const BUY_LINK = "https://oplata.info/asp2/pay.asp?id_d=5636310"; 
 
 export default function Settings({ onDataChanged }) {
+  const { showToast, showConfirm, showAlert, showChoice } = useUI(); // Используем глобальный UI
   const fileInputRef = useRef(null);
   const providers = llmService.getProviders();
   const [isPro, setIsPro] = useState(false); // Загружаем асинхронно
@@ -20,7 +22,6 @@ export default function Settings({ onDataChanged }) {
   const [selectedProvider, setSelectedProvider] = useState(providers[0]?.id || "openai");
   const [apiKeys, setApiKeys] = useState({});
   const [showKey, setShowKey] = useState(false);
-  const [message, setMessage] = useState("");
   const [stats, setStats] = useState({ count: 0, lastUpdate: "Loading..." });
 
   // Новые стейты для статуса и лицензии
@@ -65,16 +66,11 @@ export default function Settings({ onDataChanged }) {
     initData();
   }, []);
 
-  const showToast = (msg) => {
-    setMessage(msg);
-    setTimeout(() => setMessage(""), 3000);
-  };
-
   // ИСПРАВЛЕННЫЙ ОБРАБОТЧИК: Проверка лицензии через сервер
   const handleSaveLicense = async () => {
     if (!licenseKey.trim()) return;
 
-    showToast("Connecting to server...");
+    showToast("Connecting to server...", "info");
     
     // 1. Сохраняем локально
     await storageService.saveSetting("license_key", licenseKey.trim());
@@ -89,7 +85,7 @@ export default function Settings({ onDataChanged }) {
         
         // 3. НОВОЕ: Если подключен Google — сразу пушим бэкап с ключом
         if (isGoogleConnected) {
-             showToast("✅ Active! Syncing license to Cloud...");
+             showToast("✅ Active! Syncing license to Cloud...", "success");
              try {
                  const rawData = await storageService.getRawData(); // Теперь тут есть licenseKey
                  await googleService.uploadBackup(rawData);
@@ -97,12 +93,12 @@ export default function Settings({ onDataChanged }) {
                  console.warn("Auto-backup of license failed", e);
              }
         } else {
-             showToast("✅ License Activated! PRO features unlocked.");
+             showToast("✅ License Activated! PRO features unlocked.", "success");
         }
 
         if (onDataChanged) onDataChanged(); 
     } else {
-        showToast("❌ Invalid or Used Key");
+        showToast("❌ Invalid or Used Key", "error");
         setUserStatus("Trial (Activation Failed)");
     }
   };
@@ -112,7 +108,7 @@ export default function Settings({ onDataChanged }) {
     try {
         await googleService.login();
         setIsGoogleConnected(true);
-        showToast("✅ Connected. Checking cloud backup...");
+        showToast("✅ Connected. Checking cloud backup...", "info");
         
         setIsSyncing(true);
         
@@ -121,7 +117,24 @@ export default function Settings({ onDataChanged }) {
         let mergedCount = 0;
         
         if (cloudData) {
-            mergedCount = await storageService.mergeData(cloudData);
+            // ВЫБОР ИЗ 3-Х ВАРИАНТОВ (Local Force, Smart Merge, Cloud Force)
+            const strategy = await showChoice(
+                  "Sync Conflict Resolution",
+                  "Cloud data found. Select how to merge:",
+                  [
+                      { label: "☁️ Cloud > Local", value: "cloud_force", variant: "danger" },
+                      { label: "🧠 Smart Merge", value: "newest", variant: "primary" },
+                      { label: "💻 Local > Cloud", value: "local_force", variant: "default" }
+                  ]
+            );
+
+            // Если пользователь отменил выбор
+            if (!strategy) {
+                setIsSyncing(false);
+                return;
+            }
+            
+            mergedCount = await storageService.mergeData(cloudData, strategy);
             
             // UI Update (Stats)
             const prompts = await storageService.getAllPrompts();
@@ -135,19 +148,18 @@ export default function Settings({ onDataChanged }) {
             const importedKey = await storageService.getSetting("license_key");
             if (importedKey) {
                 console.log("Found license in cloud, verifying...");
-                // Проверяем на сервере (так как DeviceID восстановился, сервер скажет ОК)
                 const isValid = await userService.verifyKeyOnServer(importedKey);
                 if (isValid) {
                     setIsPro(true);
                     const newStatus = await userService.getStatusLabel();
                     setUserStatus(newStatus);
-                    setLicenseKey(importedKey); // Заполняем поле ввода
+                    setLicenseKey(importedKey); 
                 }
             }
             
             onDataChanged();
         } else {
-            showToast("✅ Connected. Cloud is empty.");
+            showToast("✅ Connected. Cloud is empty.", "success");
         }
 
         // 2. PUSH (Если у нас был ключ, а в облаке нет)
@@ -156,14 +168,14 @@ export default function Settings({ onDataChanged }) {
             console.log("Pushing local license to cloud...");
             const rawData = await storageService.getRawData();
             await googleService.uploadBackup(rawData);
-            showToast(`✅ Synced! License saved to Cloud.`);
+            showToast(`✅ Synced! License saved to Cloud.`, "success");
         } else if (mergedCount > 0) {
-            showToast(`✅ Synced! Merged ${mergedCount} prompts.`);
+            showToast(`✅ Synced! Merged ${mergedCount} prompts.`, "success");
         }
 
     } catch (e) {
         console.error(e);
-        showToast("❌ Login / Sync Failed");
+        showToast("❌ Login / Sync Failed", "error");
     } finally {
         setIsSyncing(false);
     }
@@ -172,7 +184,7 @@ export default function Settings({ onDataChanged }) {
   const handleGoogleLogout = () => {
     googleService.logout();
     setIsGoogleConnected(false);
-    showToast("Disconnected from Google");
+    showToast("Disconnected from Google", "info");
   };
 
   const handleForceSync = async () => {
@@ -180,24 +192,40 @@ export default function Settings({ onDataChanged }) {
     setIsSyncing(true);
     try {
         // 1. PULL
-        showToast("⬇️ Pulling from Cloud...");
+        showToast("⬇️ Pulling from Cloud...", "info");
         const cloudData = await googleService.downloadBackup();
         
         let mergedCount = 0;
         if (cloudData) {
-            mergedCount = await storageService.mergeData(cloudData);
+            // ВЫБОР ИЗ 3-Х ВАРИАНТОВ
+            const strategy = await showChoice(
+                  "Sync Conflict Resolution",
+                  "Cloud data found. Select how to merge:",
+                  [
+                      { label: "☁️ Cloud > Local", value: "cloud_force", variant: "danger" },
+                      { label: "🧠 Smart Merge", value: "newest", variant: "primary" },
+                      { label: "💻 Local > Cloud", value: "local_force", variant: "default" }
+                  ]
+            );
+
+            if (!strategy) {
+                setIsSyncing(false);
+                return;
+            }
+
+            mergedCount = await storageService.mergeData(cloudData, strategy);
         }
 
-        // ... (Safety Check код без изменений) ...
+        // ... (Safety Check) ...
         const allPrompts = await storageService.getAllPrompts();
         const cloudHasPrompts = Array.isArray(cloudData) ? cloudData.length > 0 : (cloudData?.prompts?.length > 0);
         if (allPrompts.length === 0 && cloudHasPrompts) {
-            alert("⚠️ SAFETY STOP: Cloud has data, but local database is empty after merge.\nUpload aborted.");
+            await showAlert("⚠️ SAFETY STOP", "Cloud has data, but local database is empty after merge.\nUpload aborted.");
             return; 
         }
 
         // 2. PUSH
-        showToast("⬆️ Pushing to Cloud...");
+        showToast("⬆️ Pushing to Cloud...", "info");
         const rawData = await storageService.getRawData(); 
         const addedRows = await googleService.syncEverything(rawData, allPrompts);
         
@@ -223,12 +251,11 @@ export default function Settings({ onDataChanged }) {
 
         let msg = "✅ Sync Complete.";
         if (mergedCount > 0) msg += ` Pulled ${mergedCount}.`;
-        if (addedRows > 0) msg += ` Logged ${addedRows}.`;
-        showToast(msg);
+        showToast(msg, "success");
 
     } catch (e) {
         console.error(e);
-        showToast("❌ Sync Error");
+        showToast("❌ Sync Error", "error");
     } finally {
         setIsSyncing(false);
     }
@@ -239,7 +266,7 @@ export default function Settings({ onDataChanged }) {
   const handleSaveKey = async () => {
     const keyToSave = apiKeys[selectedProvider] || "";
     await storageService.setApiKey(selectedProvider, keyToSave.trim());
-    showToast(`🔐 Key for ${selectedProvider} Updated Successfully`);
+    showToast(`🔐 Key for ${selectedProvider} Updated Successfully`, "success");
   };
 
   const handleKeyInputChange = (e) => {
@@ -261,7 +288,7 @@ export default function Settings({ onDataChanged }) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast("📦 Export Complete");
+    showToast("📦 Export Complete", "success");
   };
 
   const handleFileChange = (e) => {
@@ -271,10 +298,10 @@ export default function Settings({ onDataChanged }) {
     reader.onload = async (event) => {
       const success = await storageService.importData(event.target.result);
       if (success) {
-        showToast("✅ Database Restored!");
+        showToast("✅ Database Restored!", "success");
         setTimeout(() => onDataChanged(), 1000);
       } else {
-        showToast("❌ Invalid JSON File");
+        showToast("❌ Invalid JSON File", "error");
       }
     };
     reader.readAsText(file);
@@ -282,10 +309,16 @@ export default function Settings({ onDataChanged }) {
   };
 
   const handleClear = async () => {
-    if (confirm("⚠️ IRREVERSIBLE ACTION\n\nAre you sure you want to delete ALL your prompts?")) {
+    const isConfirmed = await showConfirm(
+        "⚠️ IRREVERSIBLE ACTION",
+        "Are you sure you want to delete ALL your prompts? This cannot be undone.",
+        { variant: "danger", confirmText: "Delete All" }
+    );
+
+    if (isConfirmed) {
       await storageService.clearAll();
       onDataChanged();
-      showToast("🗑️ System Wiped Clean");
+      showToast("🗑️ System Wiped Clean", "error");
     }
   };
 
@@ -456,7 +489,7 @@ export default function Settings({ onDataChanged }) {
                 <div style={{display:'flex', flexDirection:'column', gap:'1rem'}}>
                     <p style={{fontSize:'0.9rem', opacity:0.7}}>
                         ✅ Connected.<br/>
-                        Prompts save automatically. Use "Force Sync" if you worked offline.
+                        Prompts save automatically. Use &quot;Force Sync&quot; if you worked offline.
                     </p>
                     <button 
                         className={`${styles.btn} ${styles.btnPrimary}`} 
@@ -537,10 +570,6 @@ export default function Settings({ onDataChanged }) {
             Delete All Data
           </button>
         </div>
-      </div>
-
-      <div className={`${styles.toast} ${message ? styles.toastVisible : ''}`}>
-        {message}
       </div>
     </div>
   );

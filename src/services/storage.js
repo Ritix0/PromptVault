@@ -325,7 +325,8 @@ export const storageService = {
   },
 
   // Слияние с проверкой "Черного списка" и синхронизацией
-  mergeData: async (cloudJson) => {
+  // strategy: "newest" | "cloud_force" | "local_force"
+  mergeData: async (cloudJson, strategy = "newest") => {
       let cloudPrompts = [];
       let cloudUsage = 0;
       let cloudLicense = null;
@@ -346,17 +347,53 @@ export const storageService = {
       try { deletedLog = JSON.parse(localStorage.getItem(DELETED_LOG_KEY) || "[]"); } catch (e) {}
 
       let updatedCount = 0;
+
       for (const p of cloudPrompts) {
-          // Если ID есть в черном списке — ПРОПУСКАЕМ
+          // Если ID есть в черном списке — ПРОПУСКАЕМ (значит мы его удалили локально)
           if (p.id && deletedLog.includes(p.id)) continue; 
           
           if (p.title) {
-              await storageService.savePrompt(p);
-              updatedCount++;
+              // 1. Ищем существующий промпт локально
+              const localP = await dbHelper.get(STORE_PROMPTS, p.id);
+              
+              let applyChange = false;
+
+              if (!localP) {
+                  // Если локально нет — просто добавляем (всегда добавляем новые)
+                  applyChange = true;
+              } else {
+                  // КОНФЛИКТ: Есть и там и там
+                  if (strategy === "cloud_force") {
+                      // Принудительная перезапись из облака
+                      applyChange = true;
+                  } else if (strategy === "newest") {
+                      // Умное слияние по дате обновления
+                      const cloudTime = new Date(p.updatedAt).getTime();
+                      const localTime = new Date(localP.updatedAt).getTime();
+                      
+                      // Если облачная версия новее локальной
+                      if (cloudTime > localTime) {
+                          applyChange = true;
+                      }
+                  } else if (strategy === "local_force") {
+                      // Локальный приоритет: 
+                      // Мы НЕ применяем изменения из облака, если файл уже есть.
+                      // applyChange остается false.
+                      applyChange = false;
+                  }
+              }
+
+              if (applyChange) {
+                  // ВАЖНО: Используем put, а не savePrompt, чтобы сохранить 
+                  // оригинальную структуру и дату из облака (зеркальная копия),
+                  // а не создавать новую "версию" с текущей датой.
+                  await dbHelper.put(STORE_PROMPTS, p);
+                  updatedCount++;
+              }
           }
       }
 
-      // Синхронизация счетчика
+      // Синхронизация счетчика (всегда берем максимум)
       const currentUsage = await storageService.getUsageCount();
       if (cloudUsage > currentUsage) {
           await storageService.setUsageCount(cloudUsage);
@@ -368,8 +405,7 @@ export const storageService = {
           await storageService.saveSetting("license_key", cloudLicense);
       }
       
-      // НОВОЕ: Восстанавливаем ID устройства, если у нас его нет или он новый
-      // Это предотвращает накрутку счетчика при переустановке
+      // НОВОЕ: Восстанавливаем ID устройства
       const currentDeviceRec = await dbHelper.get(STORE_SETTINGS, "device_installation_id");
       if (!currentDeviceRec && cloudDeviceId) {
           await dbHelper.put(STORE_SETTINGS, { 

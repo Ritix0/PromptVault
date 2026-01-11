@@ -1,6 +1,7 @@
 /* src/app/layout.js */
 import "./globals.css";
 import CookieBanner from "@/components/CookieBanner/CookieBanner";
+import { UIProvider } from "@/context/UIContext";
 
 export const metadata = {
   title: "PromptVault (Local-First)",
@@ -15,8 +16,10 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        {children}
-        <CookieBanner />
+        <UIProvider>
+            {children}
+            <CookieBanner />
+        </UIProvider>
       </body>
     </html>
   );

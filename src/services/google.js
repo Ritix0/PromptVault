@@ -2,42 +2,90 @@
 
 // КОНФИГУРАЦИЯ
 const CLIENT_ID = "833291081802-47b7ntjqck33dhuldk71gpkqkp82edoj.apps.googleusercontent.com"; 
-
-// ИЗМЕНЕНИЕ: Оставили только безопасный доступ к файлам (Drive)
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
-
-// Имена файлов в облаке
 const DB_FILENAME = "promptvault_backup.json";
-// SHEET_NAME удален
 
 let tokenClient;
 let gapiInited = false;
 let gisInited = false;
 let accessToken = null;
+let tokenExpiresAt = 0; // Время истечения токена (timestamp)
 let scriptsLoadingPromise = null;
 
-// Хелпер getSpreadsheetId удален, так как таблицы отключены
-
-// Внутренняя функция восстановления токена
-const ensureToken = () => {
+// Внутренняя функция получения токена (с проверкой срока жизни)
+const ensureToken = async () => {
+    const now = Date.now();
+    
+    // 1. Если токена нет в памяти, ищем в localStorage
     if (!accessToken) {
         accessToken = localStorage.getItem("pv_google_token");
+        const exp = localStorage.getItem("pv_google_token_exp");
+        if (exp) tokenExpiresAt = parseInt(exp, 10);
     }
+
+    // 2. Если токена все еще нет — мы не авторизованы
+    if (!accessToken) return null;
+
+    // 3. Проверка срока действия (если осталось меньше 5 минут — обновляем)
+    // Google токены живут 1 час (3600 сек). 
+    if (tokenExpiresAt && now > (tokenExpiresAt - 5 * 60 * 1000)) {
+        console.log("🔄 Google Token expiring soon, refreshing...");
+        
+        if (tokenClient) {
+             return new Promise((resolve) => {
+                // Временный callback для обновления
+                const originalCallback = tokenClient.callback;
+                
+                tokenClient.callback = (resp) => {
+                    if (resp.error) {
+                        console.error("Token refresh failed:", resp);
+                        resolve(null); // Не удалось обновить
+                    } else {
+                        const newToken = resp.access_token;
+                        const expiresIn = resp.expires_in || 3599;
+                        const newExp = Date.now() + (expiresIn * 1000);
+                        
+                        accessToken = newToken;
+                        tokenExpiresAt = newExp;
+                        
+                        localStorage.setItem("pv_google_token", newToken);
+                        localStorage.setItem("pv_google_token_exp", newExp.toString());
+                        
+                        if (window.gapi && window.gapi.client) {
+                            window.gapi.client.setToken({ access_token: newToken });
+                        }
+                        console.log("✅ Google Token refreshed!");
+                        resolve(newToken);
+                    }
+                    // Возвращаем старый колбэк (хотя он перезаписывается при init, но для порядка)
+                    tokenClient.callback = originalCallback; 
+                };
+
+                // Запрашиваем токен тихо (prompt: '')
+                tokenClient.requestAccessToken({ prompt: '' }); 
+             });
+        }
+    }
+    
     return accessToken;
 };
 
 // Внутренняя функция инициализации API перед запросом
 const ensureInit = async () => {
-    // 1. Загружаем скрипты, если их нет
+    // 1. Загружаем скрипты
     if (!gapiInited || !gisInited) {
         await googleService.loadScripts();
     }
     
-    // 2. ВАЖНО: Передаем токен в gapi, иначе он делает анонимный запрос (ошибка 403)
-    if (accessToken && window.gapi && window.gapi.client) {
-        const currentToken = window.gapi.client.getToken();
-        if (!currentToken) {
-            window.gapi.client.setToken({ access_token: accessToken });
+    // 2. Гарантируем валидный токен
+    const token = await ensureToken();
+    
+    // 3. Передаем токен в gapi
+    if (token && window.gapi && window.gapi.client) {
+        const currentTokenObj = window.gapi.client.getToken();
+        // Если в gapi нет токена или он отличается — обновляем
+        if (!currentTokenObj || currentTokenObj.access_token !== token) {
+            window.gapi.client.setToken({ access_token: token });
         }
     }
     
@@ -48,26 +96,23 @@ const ensureInit = async () => {
 const handleApiError = (e, context) => {
     console.error(`Google API Error [${context}]:`, JSON.stringify(e, null, 2) || e);
     
-    // Проверяем коды ошибок:
-    // 401: Expired Token
-    // 403: Permission Denied / Unregistered Caller (токен не применился)
     const code = e.status || (e.result && e.result.error && e.result.error.code);
     
+    // 401/403: Токен протух или невалиден
     if (code === 401 || code === 403) {
-        console.warn("Token expired or invalid. Logging out locally.");
+        console.warn("Token expired or invalid (401/403). Logging out locally.");
         
-        // Сброс состояния
         localStorage.removeItem("pv_google_token");
+        localStorage.removeItem("pv_google_token_exp");
         accessToken = null;
+        tokenExpiresAt = 0;
+        
         if (window.gapi && window.gapi.client) {
             window.gapi.client.setToken(null);
         }
-
-        // Уведомление пользователя
-        alert("Google Session Expired/Invalid. Please disconnect and sign in again.");
         
-        // Можно перезагрузить страницу, чтобы обновить UI Settings
-        // window.location.reload(); 
+        // Выбрасываем ошибку с понятным текстом для UI (чтобы showToast показал)
+        throw new Error("Session expired. Please sign in again.");
     }
     throw e;
 };
@@ -79,7 +124,6 @@ export const googleService = {
     if (scriptsLoadingPromise) return scriptsLoadingPromise;
 
     scriptsLoadingPromise = new Promise((resolve) => {
-      // Если уже загружено
       if (typeof window !== 'undefined' && window.gapi && window.google) {
           gapiInited = true;
           gisInited = true;
@@ -92,10 +136,8 @@ export const googleService = {
       script1.onload = () => {
         window.gapi.load("client", async () => {
           await window.gapi.client.init({
-            // clientId не обязателен тут для bearer auth, но полезен для контекста
             discoveryDocs: [
               "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"
-              // Sheets API удален отсюда
             ],
           });
           gapiInited = true;
@@ -112,9 +154,18 @@ export const googleService = {
           scope: SCOPES,
           callback: (resp) => {
             if (resp.error !== undefined) throw (resp);
-            accessToken = resp.access_token;
-            localStorage.setItem("pv_google_token", accessToken);
-            // Сразу устанавливаем токен в gapi
+            
+            const newToken = resp.access_token;
+            // Сохраняем время жизни (обычно 3599 сек)
+            const expiresIn = resp.expires_in || 3599;
+            const expTime = Date.now() + (expiresIn * 1000);
+
+            accessToken = newToken;
+            tokenExpiresAt = expTime;
+
+            localStorage.setItem("pv_google_token", newToken);
+            localStorage.setItem("pv_google_token_exp", expTime.toString());
+
             if (window.gapi && window.gapi.client) {
                 window.gapi.client.setToken({ access_token: accessToken });
             }
@@ -132,16 +183,27 @@ export const googleService = {
   login: async () => {
     await googleService.loadScripts();
     return new Promise((resolve, reject) => {
+      // Переопределяем callback для этого конкретного вызова
       tokenClient.callback = (resp) => {
         if (resp.error) reject(resp);
-        accessToken = resp.access_token;
-        localStorage.setItem("pv_google_token", accessToken);
-        // Установка токена
+        
+        const newToken = resp.access_token;
+        const expiresIn = resp.expires_in || 3599;
+        const expTime = Date.now() + (expiresIn * 1000);
+
+        accessToken = newToken;
+        tokenExpiresAt = expTime;
+
+        localStorage.setItem("pv_google_token", newToken);
+        localStorage.setItem("pv_google_token_exp", expTime.toString());
+
         if (window.gapi && window.gapi.client) {
             window.gapi.client.setToken({ access_token: accessToken });
         }
         resolve(accessToken);
       };
+      
+      // Запрашиваем авторизацию (если токен есть, попробуем тихо, иначе попап)
       if (accessToken) tokenClient.requestAccessToken({prompt: ''});
       else tokenClient.requestAccessToken({prompt: 'consent'});
     });
@@ -153,21 +215,30 @@ export const googleService = {
       window.google.accounts.oauth2.revoke(token, () => {console.log('Revoked')});
     }
     accessToken = null;
+    tokenExpiresAt = 0;
+    
     localStorage.removeItem("pv_google_token");
+    localStorage.removeItem("pv_google_token_exp");
+    
     if (window.gapi && window.gapi.client) {
         window.gapi.client.setToken(null);
     }
   },
 
   isAuthenticated: () => {
-      return !!ensureToken();
+      // Простая синхронная проверка наличия токена (без проверки валидности)
+      return !!localStorage.getItem("pv_google_token");
   },
 
   // --- DRIVE BACKUP (JSON) ---
   
   uploadBackup: async (jsonData) => {
-    if (!ensureToken()) return;
+    // ВАЖНО: await ensureToken не здесь, а внутри ensureInit
+    // Но для проверки логина делаем быстрый чек
+    if (!localStorage.getItem("pv_google_token")) return;
+    
     await ensureInit(); 
+
     try {
         const response = await window.gapi.client.drive.files.list({
             q: `name = '${DB_FILENAME}' and trashed = false`,
@@ -201,8 +272,9 @@ export const googleService = {
 
   // Скачивание бэкапа (Pull)
   downloadBackup: async () => {
-    if (!ensureToken()) return null;
+    if (!localStorage.getItem("pv_google_token")) return null;
     await ensureInit();
+
     try {
         const response = await window.gapi.client.drive.files.list({
             q: `name = '${DB_FILENAME}' and trashed = false`,
@@ -234,20 +306,18 @@ export const googleService = {
 
   // --- SHEETS LOGGING (ОТКЛЮЧЕНО) ---
   appendToSheet: async (prompt) => {
-     // Заглушка: просто выходим, ничего не делаем
      return;
   },
 
   // --- SMART SYNC (ALL) ---
   syncEverything: async (rawJsonData, allPrompts) => {
-    if (!ensureToken()) throw new Error("Not authenticated");
+    if (!localStorage.getItem("pv_google_token")) throw new Error("Not authenticated");
     await ensureInit();
 
-    // 1. Бэкап файла: загружаем rawJsonData (где есть meta и usageCount)
+    // 1. Бэкап файла: загружаем rawJsonData
     await googleService.uploadBackup(rawJsonData);
     console.log("Backup synced (File Only).");
 
-    // 2. Логику таблиц удалили, чтобы не вызывать ошибку прав доступа
     return 0;
   }
 };

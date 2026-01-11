@@ -1,0 +1,83 @@
+/* src/components/UI/Toast.module.css */
+.container {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  z-index: 9999;
+  pointer-events: none; /* Чтобы прозрачная область не блокировала клики */
+}
+
+.toast {
+  min-width: 300px;
+  max-width: 400px;
+  padding: 1rem;
+  border-radius: 8px;
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-left: 5px solid var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  pointer-events: auto; /* Сами тосты кликабельны */
+  animation: slideIn 0.3s ease-out forwards;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.success {
+  border-left-color: #22c55e;
+}
+
+.error {
+  border-left-color: #ef4444;
+}
+
+.info {
+  border-left-color: var(--primary);
+}
+
+.closeBtn {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  opacity: 0.5;
+  color: inherit;
+  padding: 0 0.2rem;
+}
+
+.closeBtn:hover {
+  opacity: 1;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Мобильная адаптация */
+@media (max-width: 768px) {
+  .container {
+    bottom: 1rem;
+    left: 1rem;
+    right: 1rem;
+    align-items: center;
+  }
+  
+  .toast {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+}
